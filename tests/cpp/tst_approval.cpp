@@ -271,6 +271,10 @@ TEST(an_install_is_checked_on_disk) {
     CHECK(!notOnDisk(installed, "app", "2.0.0", QString()).isEmpty());
     CHECK(!notOnDisk({record("app", "", "a2")}, "app", "2.0.0", "a2").isEmpty());
     CHECK(!notOnDisk({QVariantMap{{"name", "app"}, {"version", "2.0.0"}}}, "app", "2.0.0", "a2").isEmpty());
+    // Basecamp's own copy of the same release is not one an install wrote.
+    QVariantMap embedded = record("app", "2.0.0", "a2");
+    embedded.insert("installType", "embedded");
+    CHECK(notOnDisk({embedded}, "app", "2.0.0", "a2").contains("app is not installed"));
     // An embedded copy beside the one installed.
     CHECK_EQ(notOnDisk({record("app", "1.0.0", "e1"), record("app", "2.0.0", "a2")}, "app", "2.0.0", "a2"),
              QString());

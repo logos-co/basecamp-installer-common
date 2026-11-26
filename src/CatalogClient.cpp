@@ -103,7 +103,9 @@ void CatalogClient::reload()
     const auto failed = [self, current](const char* what) {
         if (!current()) return;
         qWarning() << "CatalogClient: could not read" << what << "- keeping the last list";
+        self->m_loadError = QString::fromLatin1(what);
         self->setLoading(false);
+        emit self->loadFailed();
     };
 
     m_modules->listRepositories([self, current, failed](const QVariantList& repositories, bool read) {
@@ -124,6 +126,7 @@ void CatalogClient::reload()
                             self->applyRepositories(repositories);
                             self->m_model->update(catalog, installed, variants);
                             self->m_hasLoaded = true;
+                            self->m_loadError.clear();
                             self->setLoading(false);
                             emit self->loaded();
                         });

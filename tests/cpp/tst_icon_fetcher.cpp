@@ -346,4 +346,40 @@ TEST(an_icon_the_catalog_replaced_while_it_came_is_not_shown) {
     CHECK_EQ(iconOf(model, "wallet_ui"), "data:image/png;base64," + QString::fromLatin1(after.toBase64()));
 }
 
+// A new icon that is refused: the old one doesn't stay in its place.
+TEST(an_icon_replaced_by_one_that_is_refused_goes) {
+    const QString newUrl = QStringLiteral("https://repo.example/icons/wallet-2.png");
+    const QByteArray before = png();
+    FakeServer server;
+    server.files.insert(kUrl, before);
+    server.files.insert(newUrl, "not a png");
+    PackageModel model;
+    model.setCatalog({withIcon(catalogRow("r", "wallet_ui", "1.0", "H"), kUrl, sha(before))});
+    IconFetcher fetcher(&model);
+    fetcher.setFetch(server.fetch());
+    SPIN(10);
+    CHECK(!iconOf(model, "wallet_ui").isEmpty());
+    model.setCatalog({withIcon(catalogRow("r", "wallet_ui", "1.1", "H2"), newUrl, sha("not a png"))});
+    SPIN(10);
+    CHECK_EQ(iconOf(model, "wallet_ui"), QString());
+}
+
+// A reply that lands before the next scan is checked against the model.
+TEST(an_old_icon_arriving_before_the_next_scan_is_not_shown) {
+    const QString newUrl = QStringLiteral("https://repo.example/icons/wallet-2.png");
+    const QByteArray before = png(), after = png(128, 128);
+    FakeServer server;
+    server.hold = true;
+    server.files.insert(kUrl, before);
+    server.files.insert(newUrl, after);
+    PackageModel model;
+    model.setCatalog({withIcon(catalogRow("r", "wallet_ui", "1.0", "H"), kUrl, sha(before))});
+    IconFetcher fetcher(&model);
+    fetcher.setFetch(server.fetch());
+    SPIN(10);
+    model.setCatalog({withIcon(catalogRow("r", "wallet_ui", "1.1", "H2"), newUrl, sha(after))});
+    server.flush();
+    CHECK_EQ(iconOf(model, "wallet_ui"), QString());
+}
+
 CHECK_MAIN()

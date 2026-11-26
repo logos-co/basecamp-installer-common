@@ -281,16 +281,35 @@ TEST(a_load_with_a_failed_read_keeps_the_last_list) {
         client.load();
         CHECK_EQ(model.rowCount(), 1);
         CHECK(model.index(0).data(PackageModel::IsInstalledRole).toBool());
-        int loaded = 0;
+        int loaded = 0, failed = 0;
         QObject::connect(&client, &CatalogClient::loaded, &client, [&] { ++loaded; });
+        QObject::connect(&client, &CatalogClient::loadFailed, &client, [&] { ++failed; });
         modules.failing << call;
         client.refresh();
         CHECK_EQ(loaded, 0);
+        CHECK_EQ(failed, 1);
+        CHECK(!client.loadError().isEmpty());
         CHECK(!client.isLoading());
         CHECK_EQ(model.rowCount(), 1);
         CHECK(model.index(0).data(PackageModel::IsInstalledRole).toBool());
         CHECK_EQ(client.repositoryCount(), 2);
     }
+}
+
+// A first load that fails says so; the next good one clears it.
+TEST(a_first_load_that_fails_says_so) {
+    FakeModules modules;
+    PackageModel model;
+    CatalogClient client(&modules, &model);
+    modules.failing << "getCatalog";
+    client.load();
+    CHECK(!client.hasLoaded());
+    CHECK(!client.isLoading());
+    CHECK_EQ(client.loadError(), QStringLiteral("the catalog"));
+    modules.failing.clear();
+    client.refresh();
+    CHECK(client.hasLoaded());
+    CHECK_EQ(client.loadError(), QString());
 }
 
 CHECK_MAIN()

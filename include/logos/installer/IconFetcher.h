@@ -57,6 +57,8 @@ private:
     void startNext();
     void fetched(const QString& key, const QString& sha256, const QByteArray& data,
                  const QString& error);
+    // The icon the model names for the package now, or "".
+    QString wantedKey(const QString& repositoryUrl, const QString& name) const;
     QString diskPath(const QString& sha256) const;
     void defaultFetch(const QUrl& url, Done done);
 
@@ -74,10 +76,8 @@ private:
     QList<QString> m_queue;
     QSet<QString> m_inFlight;
     QSet<QString> m_refused;
-    // By package (repository and name): the icon it shows now, and the one
-    // the catalog names for it.
+    // By package (repository and name): the icon it shows now.
     QHash<QString, QString> m_keyByPackage;
-    QHash<QString, QString> m_wantedByPackage;
 };
 
 }  // namespace logos::installer

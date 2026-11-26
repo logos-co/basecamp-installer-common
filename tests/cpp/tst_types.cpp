@@ -4,6 +4,7 @@
 
 #include <logos/installer/Types.h>
 
+#include <QCoreApplication>
 #include <QFile>
 #include <QJSEngine>
 
@@ -13,13 +14,15 @@ namespace {
 
 QJSValue typesJs()
 {
-    static QJSEngine engine;
+    // Gone with the application, not after it: a static engine outlives
+    // QCoreApplication and aborts at exit on macOS.
+    static QJSEngine* engine = new QJSEngine(QCoreApplication::instance());
     QFile f(QStringLiteral(INSTALLER_QML_DIR "/Types.js"));
     if (!f.open(QIODevice::ReadOnly)) return {};
     QString code = QString::fromUtf8(f.readAll());
     code.replace(QStringLiteral(".pragma library"), QString());
-    engine.evaluate(code);
-    return engine.globalObject();
+    engine->evaluate(code);
+    return engine->globalObject();
 }
 
 int js(const char* group, const char* name)

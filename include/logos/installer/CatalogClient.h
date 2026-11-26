@@ -16,7 +16,8 @@ class PackageModules;
 // Keeps a PackageModel filled: the repositories, the catalog, the installed
 // packages and this host's variants, and the downloader's download source and
 // storage state. A load answers in that order, and an answer that a newer
-// load overtook is dropped. A load with a read that failed changes nothing.
+// load overtook is dropped. A load with a read that failed changes nothing
+// but loadError().
 // The backend forwards the modules' events.
 class CatalogClient : public QObject {
     Q_OBJECT
@@ -43,6 +44,9 @@ public:
 
     bool isLoading() const { return m_loading; }
     bool hasLoaded() const { return m_hasLoaded; }
+    // What the last load couldn't read ("the catalog", ...), or "" when it
+    // read everything. With hasLoaded(), the list shown is the last good one.
+    QString loadError() const { return m_loadError; }
 
     QVariantList repositories() const { return m_repositories; }
     int repositoryCount() const { return m_repositories.size(); }
@@ -65,6 +69,7 @@ public:
 signals:
     void loadingChanged();
     void loaded();
+    void loadFailed();
     void repositoriesChanged();
     void downloadSourceChanged();
     void storageStateChanged();
@@ -89,6 +94,7 @@ private:
     int m_generation = 0;
     bool m_loading = false;
     bool m_hasLoaded = false;
+    QString m_loadError;
 
     QVariantList m_repositories;
     QVariantMap m_repositoryLabels;

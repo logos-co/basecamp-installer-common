@@ -50,6 +50,7 @@ IconFetcher::IconFetcher(PackageModel* model, QObject* parent)
 {
     m_fetch = [this](const QUrl& url, Done done) { defaultFetch(url, std::move(done)); };
     connect(model, &QAbstractItemModel::rowsInserted, this, &IconFetcher::scheduleScan);
+    connect(model, &QAbstractItemModel::rowsRemoved, this, &IconFetcher::scheduleScan);
     connect(model, &QAbstractItemModel::modelReset, this, &IconFetcher::scheduleScan);
     connect(model, &QAbstractItemModel::dataChanged, this,
             [this](const QModelIndex&, const QModelIndex&, const QList<int>& roles) {
@@ -105,7 +106,6 @@ void IconFetcher::scan()
 {
     if (!m_model) return;
     QSet<QString> named;
-    QHash<QString, QString> wanted;
     for (int row = 0; row < m_model->rowCount(); ++row) {
         const QModelIndex idx = m_model->index(row);
         const QString name = idx.data(PackageModel::NameRole).toString();
@@ -117,8 +117,7 @@ void IconFetcher::scan()
         named.insert(package);
         const QString sha = idx.data(PackageModel::CatalogIconSha256Role).toString().toLower();
         const QString key = sha.isEmpty() ? url : sha;
-        wanted.insert(package, key);
-        if (m_keyByPackage.value(package) == key || m_refused.contains(key)) continue;
+        if (m_keyByPackage.value(package) == key) continue;
         const bool fullBleed = idx.data(PackageModel::SupportsFullBleedIconRole).toBool();
 
         if (!m_dataUrlByKey.contains(key) && !diskPath(sha).isEmpty()) {
@@ -136,6 +135,10 @@ void IconFetcher::scan()
             m_model->setIcon(repositoryUrl, name, *known, fullBleed);
             continue;
         }
+        // The catalog names another icon now: the one shown goes, and stays
+        // gone if the new one is refused.
+        if (m_keyByPackage.remove(package)) m_model->setIcon(repositoryUrl, name, {}, false);
+        if (m_refused.contains(key)) continue;
 
         QList<Want>& waiting = m_waitingByKey[key];
         const bool alreadyWaiting = std::any_of(waiting.cbegin(), waiting.cend(), [&](const Want& w) {
@@ -148,7 +151,6 @@ void IconFetcher::scan()
             m_queue.append(key);
         }
     }
-    m_wantedByPackage = wanted;
 
     // The catalog no longer names an icon for these.
     for (auto it = m_keyByPackage.begin(); it != m_keyByPackage.end();) {
@@ -194,15 +196,26 @@ void IconFetcher::fetched(const QString& key, const QString& sha256, const QByte
         }
         if (m_model) {
             for (const Want& w : waiting) {
-                // The catalog moved on to another icon while this one came.
-                const QString package = packageOf(w.repositoryUrl, w.name);
-                if (m_wantedByPackage.value(package) != key) continue;
-                m_keyByPackage.insert(package, key);
+                // The catalog moved on, or dropped the package, while this one
+                // came: the model says now, not the last scan.
+                if (wantedKey(w.repositoryUrl, w.name) != key) continue;
+                m_keyByPackage.insert(packageOf(w.repositoryUrl, w.name), key);
                 m_model->setIcon(w.repositoryUrl, w.name, dataUrl, w.fullBleed);
             }
         }
     }
     startNext();
+}
+
+QString IconFetcher::wantedKey(const QString& repositoryUrl, const QString& name) const
+{
+    const int row = m_model ? m_model->rowOf(name, repositoryUrl) : -1;
+    if (row < 0) return {};
+    const QModelIndex idx = m_model->index(row);
+    const QString url = idx.data(PackageModel::CatalogIconUrlRole).toString();
+    if (url.isEmpty()) return {};
+    const QString sha = idx.data(PackageModel::CatalogIconSha256Role).toString().toLower();
+    return sha.isEmpty() ? url : sha;
 }
 
 QString IconFetcher::diskPath(const QString& sha256) const

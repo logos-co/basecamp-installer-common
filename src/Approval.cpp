@@ -231,12 +231,13 @@ bool pluginInstalled(const QVariantMap& reply)
 QString notOnDisk(const QVariantList& installed, const QString& name, const QString& version,
                   const QString& rootHash)
 {
-    // An embedded copy may sit beside the one just installed: any record will do.
     QString onDisk;
     bool found = false;
     for (const QVariant& v : installed) {
         const QVariantMap record = v.toMap();
         if (str(record, "name") != name && str(record, "moduleName") != name) continue;
+        // Basecamp's own copy is not one an install wrote.
+        if (str(record, "installType") == QLatin1String("embedded")) continue;
         found = true;
         const QString recordVersion = str(record, "version");
         const QString recordHash =

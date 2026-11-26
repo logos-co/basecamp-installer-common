@@ -17,6 +17,7 @@
 #include <QFile>
 #include <QHash>
 #include <QRegularExpression>
+#include <QSet>
 #include <QTemporaryDir>
 
 #include <tuple>
@@ -52,7 +53,9 @@ struct FakeModules : InstallModules {
     QString installCallError;
     bool installedAnyway = false;            // a call that failed, but the files landed
     int readFails = 0;                       // the next reads of the installed packages that fail
-    int readFailsAfterInstall = 0;           // readFails, once an install has landed
+    int readFailsAfterInstall = 0;           // readFails, once an install was asked for
+    QSet<int> failingReads;                  // reads that fail, counted from 1
+    int readCount = 0;
     QHash<QString, QString> diskHashOverride;
     // What getInstalledPackages reports after an install, when not what it wrote.
     QHash<QString, QString> diskVersionOverride;
@@ -129,6 +132,7 @@ struct FakeModules : InstallModules {
         const QStringList p = read(path);
         calls << "install " + p.value(0);
         installedPaths << path;
+        readFails = readFailsAfterInstall;
         if (!installCallError.isEmpty()) {
             if (installedAnyway) addInstalled(p.value(0), p.value(1), p.value(2));
             done({}, installCallError);
@@ -139,7 +143,6 @@ struct FakeModules : InstallModules {
             return;
         }
         addInstalled(p.value(0), p.value(1), p.value(2));
-        readFails = readFailsAfterInstall;
         done({{"name", p.value(0)}, {"path", "/modules/" + p.value(0)}}, {});
     }
     void uninstallPackage(const QString& name, std::function<void(const QVariantMap&)> done) override
@@ -155,6 +158,10 @@ struct FakeModules : InstallModules {
     void readInstalledPackages(std::function<void(const QVariantList&, bool)> done) override
     {
         calls << "read";
+        if (failingReads.contains(++readCount)) {
+            done({}, false);
+            return;
+        }
         if (readFails > 0) {
             --readFails;
             done({}, false);
@@ -554,12 +561,72 @@ TEST(a_call_that_timed_out_says_the_package_may_be_installed) {
     Run r;
     r.modules.serve("app", "2.0.0", "a");
     r.modules.installCallError = "package_manager did not reply within 300 s";
+    r.modules.readFailsAfterInstall = 100;
     r.basecamp.decide = [](const QString&, const QVariantMap&) {
         return approve(planOf({release("app", "2.0.0", "a")}));
     };
     r.installer.install("app", "2.0.0", kRepo);
     SPIN(60);
     CHECK(r.error().contains("may in fact be installed"));
+}
+
+// package_manager runs one call at a time: a read that answers came after
+// the install ended, so what it shows is the outcome.
+TEST(a_call_that_timed_out_is_settled_by_the_next_read_that_answers) {
+    Run r;
+    r.installer.setConfirmRetries(3, 1000);
+    r.modules.serve("app", "2.0.0", "a");
+    r.modules.installCallError = "package_manager did not reply within 300 s";
+    r.basecamp.decide = [](const QString&, const QVariantMap&) {
+        return approve(planOf({release("app", "2.0.0", "a")}));
+    };
+    r.installer.install("app", "2.0.0", kRepo);
+    CHECK(r.outcome() == Installer::Outcome::Failed);
+    CHECK(r.error().contains("not installed on disk"));
+}
+
+// Basecamp's own copy of the same release is not the install landing.
+TEST(an_embedded_copy_of_the_release_doesnt_confirm_a_timed_out_install) {
+    Run r;
+    r.modules.addInstalled("app", "2.0.0", "a", "embedded");
+    r.modules.serve("app", "2.0.0", "a");
+    r.modules.installCallError = "package_manager did not reply within 300 s";
+    r.basecamp.decide = [](const QString&, const QVariantMap&) {
+        return approve(planOf({release("app", "2.0.0", "a")}));
+    };
+    r.installer.upgrade("app", "2.0.0", 2, kRepo);
+    CHECK(r.outcome() == Installer::Outcome::Failed);
+    CHECK(r.error().contains("not installed on disk"));
+}
+
+// Not knowing what is on disk installs nothing.
+TEST(a_failed_read_before_planning_installs_nothing) {
+    Run r;
+    r.modules.serve("app", "2.0.0", "a");
+    r.modules.readFails = 1;
+    r.basecamp.decide = [](const QString&, const QVariantMap&) {
+        return approve(planOf({release("app", "2.0.0", "a")}));
+    };
+    r.installer.install("app", "2.0.0", kRepo);
+    CHECK(r.actions().isEmpty());
+    CHECK(r.outcome() == Installer::Outcome::Failed);
+    CHECK(r.error().contains("could not be read"));
+}
+
+// Not knowing whether the user's copy is there: it isn't replaced blind.
+TEST(a_failed_read_before_installing_installs_nothing) {
+    Run r;
+    r.modules.addInstalled("app", "1.0.0", "old");
+    r.modules.serve("app", "2.0.0", "a");
+    r.modules.failingReads = {2};   // the plan's read answers; the one before installing doesn't
+    r.basecamp.decide = [](const QString&, const QVariantMap&) {
+        return approve(planOf({release("app", "2.0.0", "a")}));
+    };
+    r.installer.upgrade("app", "2.0.0", 0, kRepo);
+    CHECK(r.installs().isEmpty());
+    CHECK(r.outcome() == Installer::Outcome::Failed);
+    CHECK(r.error().contains("could not be read"));
+    CHECK_EQ(r.modules.installed.value("app").value("version").toString(), QStringLiteral("1.0.0"));
 }
 
 // Until the disk says, the request keeps its turn and its files.
@@ -569,6 +636,7 @@ TEST(a_call_that_timed_out_holds_its_turn_and_files_until_the_disk_says) {
     r.modules.serve("app", "2.0.0", "a");
     r.modules.serve("next", "1.0.0", "n");
     r.modules.installCallError = "package_manager did not reply within 300 s";
+    r.modules.readFailsAfterInstall = 100;
     r.basecamp.decide = [](const QString&, const QVariantMap& params) {
         return params.value("name") == "app" ? approve(planOf({release("app", "2.0.0", "a")}))
                                              : refuse("cancelled");
@@ -582,7 +650,8 @@ TEST(a_call_that_timed_out_holds_its_turn_and_files_until_the_disk_says) {
     SPIN(150);
     CHECK_EQ(std::get<0>(r.finished.value(0)), QStringLiteral("app"));
     CHECK(std::get<1>(r.finished.value(0)) == Installer::Outcome::Failed);
-    CHECK(!QFile::exists(r.modules.installedPaths.value(0)));
+    // Never confirmed: the install may still be reading its copy.
+    CHECK(QFile::exists(r.modules.installedPaths.value(0)));
     CHECK_EQ(r.basecamp.asked.size(), 2);
 }
 
@@ -725,6 +794,22 @@ TEST(a_local_file_is_installed_from_a_private_copy_as_approved) {
     CHECK_EQ(r.modules.installedPaths.value(0), stagedAsked);
     CHECK(r.outcome() == Installer::Outcome::Done);
     CHECK(!QFile::exists(stagedAsked));
+}
+
+// An install that never confirmed may still read the staged copy.
+TEST(a_local_file_whose_install_never_confirmed_keeps_its_copy) {
+    Run r;
+    r.modules.installCallError = "package_manager did not reply within 300 s";
+    r.modules.readFailsAfterInstall = 100;
+    const QString picked = r.modules.writeFile("picked.lgx", "tool|1.0.0|t|");
+    r.basecamp.decide = [](const QString&, const QVariantMap& params) {
+        const QString staged = params.value("localPath").toString();
+        return approve({{"file", QVariantMap{{"rootHash", "t"}, {"signer", ""}, {"sha256", sha256Of(staged)}}}});
+    };
+    r.installer.installFile(picked);
+    SPIN(60);
+    CHECK(r.outcome() == Installer::Outcome::Failed);
+    CHECK(QFile::exists(r.modules.installedPaths.value(0)));
 }
 
 TEST(a_local_file_that_changed_after_approval_installs_nothing) {

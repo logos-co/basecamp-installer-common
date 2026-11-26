@@ -10,6 +10,7 @@
 #include <QVariantMap>
 
 #include <memory>
+#include <vector>
 
 class QTemporaryDir;
 
@@ -61,7 +62,9 @@ public:
     // How often, and how long apart, the installed packages are read again
     // when an install can't be confirmed yet: the read failed, or the call
     // timed out and may still be running. The request holds its turn and its
-    // files until then.
+    // files until a read answers; package_manager runs one call at a time, so
+    // that read came after the install ended. Without one, the files stay
+    // while the installer lives.
     void setConfirmRetries(int retries, int intervalMs)
     {
         m_confirmRetries = retries;
@@ -130,6 +133,8 @@ private:
     QList<JobPtr> m_queue;
     JobPtr m_current;
     std::unique_ptr<QTemporaryDir> m_staging;
+    // Copies an install that never confirmed may still be reading.
+    std::vector<std::shared_ptr<QTemporaryDir>> m_kept;
 };
 
 }  // namespace logos::installer
