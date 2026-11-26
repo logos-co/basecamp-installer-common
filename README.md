@@ -35,7 +35,6 @@ What Logos' two installer apps, App Manager and Package Manager, share with each
 | `Downloads.js` | bytes and progress text, transport caption and icon name, finding peers, the download notice |
 | `Stages.js` | stage, progress and action words; version transitions |
 | `Availability.js` | why a package isn't available, in words |
-| `MonogramColor.js` | an app's fallback tile colour |
 
 Components and screens stay in each app.
 
