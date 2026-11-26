@@ -98,22 +98,36 @@ void CatalogClient::reload()
     QPointer<CatalogClient> self(this);
     const auto current = [self, generation] { return self && self->m_generation == generation; };
 
-    m_modules->listRepositories([self, current](const QVariantList& repositories) {
+    // A read that failed keeps what was shown: a module that didn't answer
+    // is not an empty catalog.
+    const auto failed = [self, current](const char* what) {
         if (!current()) return;
-        self->applyRepositories(repositories);
-        self->m_modules->getCatalog([self, current](const QVariantList& catalog) {
+        qWarning() << "CatalogClient: could not read" << what << "- keeping the last list";
+        self->setLoading(false);
+    };
+
+    m_modules->listRepositories([self, current, failed](const QVariantList& repositories, bool read) {
+        if (!current()) return;
+        if (!read) return failed("the repositories");
+        self->m_modules->getCatalog([self, current, failed, repositories](const QVariantList& catalog, bool read) {
             if (!current()) return;
-            self->m_modules->getInstalledPackages([self, current, catalog](const QVariantList& installed) {
-                if (!current()) return;
-                self->m_modules->getValidVariants(
-                    [self, current, catalog, installed](const QStringList& variants) {
-                        if (!current()) return;
-                        self->m_model->update(catalog, installed, variants);
-                        self->m_hasLoaded = true;
-                        self->setLoading(false);
-                        emit self->loaded();
-                    });
-            });
+            if (!read) return failed("the catalog");
+            self->m_modules->getInstalledPackages(
+                [self, current, failed, repositories, catalog](const QVariantList& installed, bool read) {
+                    if (!current()) return;
+                    if (!read) return failed("the installed packages");
+                    self->m_modules->getValidVariants(
+                        [self, current, failed, repositories, catalog, installed](const QStringList& variants,
+                                                                                bool read) {
+                            if (!current()) return;
+                            if (!read) return failed("this host's variants");
+                            self->applyRepositories(repositories);
+                            self->m_model->update(catalog, installed, variants);
+                            self->m_hasLoaded = true;
+                            self->setLoading(false);
+                            emit self->loaded();
+                        });
+                });
         });
     });
 }

@@ -116,9 +116,12 @@ void Installer::uninstall(const QStringList& names)
 
 void Installer::enqueue(JobPtr job)
 {
-    // Asked twice (a double click): once is what was meant.
+    // Asked twice (a double click): once is what was meant. Another version,
+    // source or pick is another request.
     const auto same = [&job](const JobPtr& other) {
         return other && other->kind == job->kind && other->name == job->name
+            && other->version == job->version && other->repositoryUrl == job->repositoryUrl
+            && other->mode == job->mode && other->choices == job->choices
             && other->path == job->path && other->names == job->names;
     };
     if (same(m_current) || std::any_of(m_queue.cbegin(), m_queue.cend(), same)) return;
@@ -343,9 +346,9 @@ void Installer::installOne(const JobPtr& job, const QVariantList& rows, int inde
         [self, job, rows, index, row](const QVariantMap& reply, const QString& callError) {
             if (!self) return;
             if (!callError.isEmpty()) {
-                // The deadline cancels nothing: the files may well be on disk.
-                self->failDuring(job, row, QStringLiteral("%1; the package may in fact be installed, "
-                                                          "check before retrying").arg(callError));
+                // The deadline cancels nothing: the install may still be
+                // under way, so the disk decides.
+                self->confirmOnDisk(job, rows, index, callError, 0);
                 return;
             }
             if (!pluginInstalled(reply)) {
@@ -354,18 +357,42 @@ void Installer::installOne(const JobPtr& job, const QVariantList& rows, int inde
                 return;
             }
             // The installer's word for it; the disk has the last one.
-            self->m_modules->readInstalledPackages(
-                [self, job, rows, index, row](const QVariantList& installed, bool read) {
-                    if (!self) return;
-                    const QString missing = read ? notOnDisk(installed, str(row, "name"), str(row, "version"))
-                                                 : QString();
-                    if (!missing.isEmpty()) {
-                        self->failDuring(job, row, missing);
-                        return;
-                    }
-                    self->m_progress->finish(str(row, "name"));
-                    self->installRows(job, rows, index + 1);
+            self->confirmOnDisk(job, rows, index, {}, 0);
+        });
+}
+
+void Installer::confirmOnDisk(const JobPtr& job, const QVariantList& rows, int index,
+                              const QString& callError, int attempt)
+{
+    const QVariantMap row = rows.at(index).toMap();
+    QPointer<Installer> self(this);
+    m_modules->readInstalledPackages(
+        [self, job, rows, index, row, callError, attempt](const QVariantList& installed, bool read) {
+            if (!self) return;
+            const QString missing = read ? notOnDisk(installed, str(row, "name"), str(row, "version"),
+                                                     str(row, "rootHash"))
+                                         : QString();
+            if (read && missing.isEmpty()) {
+                self->m_progress->finish(str(row, "name"));
+                self->installRows(job, rows, index + 1);
+                return;
+            }
+            // package_manager answered and the disk says otherwise.
+            if (read && callError.isEmpty()) {
+                self->failDuring(job, row, missing);
+                return;
+            }
+            if (attempt < self->m_confirmRetries) {
+                QTimer::singleShot(self->m_confirmRetryMs, self, [self, job, rows, index, callError, attempt] {
+                    if (self) self->confirmOnDisk(job, rows, index, callError, attempt + 1);
                 });
+                return;
+            }
+            self->failDuring(job, row, callError.isEmpty()
+                ? QStringLiteral("package_manager reported it installed, but its installed packages "
+                                 "could not be read to confirm it; check before retrying")
+                : QStringLiteral("%1; the package may in fact be installed, check before retrying")
+                      .arg(callError));
         });
 }
 
@@ -471,10 +498,15 @@ void Installer::askUninstall(const JobPtr& job)
                 self->endUnapproved(job, answer.error);
                 return;
             }
-            // What Basecamp approved: an app, and what only it needed. A
-            // Basecamp that doesn't say approved what was asked.
+            // What Basecamp approved: an app, and what only it needed.
             const QStringList approved = answer.data.value(QStringLiteral("names")).toStringList();
-            if (!approved.isEmpty()) job->names = approved;
+            if (approved.isEmpty() || approved.contains(QString())) {
+                self->end(job, Outcome::Failed, QStringLiteral("Basecamp did not say what to remove, "
+                                                               "so nothing was removed."));
+                return;
+            }
+            job->names = approved;
+            job->names.removeDuplicates();
             self->uninstallNext(job, 0);
         });
 }

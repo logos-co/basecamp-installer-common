@@ -98,9 +98,19 @@ An approved catalog release is downloaded pinned, release by release; held to
 the approval; copied where only this backend writes; each copy checked to be
 the approved release and signed as approved; then installed, a copy the user
 installed earlier removed only after its replacement passed those checks; and
-each install checked on disk. What is on disk already as approved is not
-fetched again, except the package an upgrade names; an uninstall removes what
-Basecamp's answer names.
+each install checked on disk: the approved version and root hash. An install
+whose call timed out, or that can't be read back, keeps its turn and its files
+while the installed packages are read again. What is on disk already as
+approved is not fetched again, except the package an upgrade names; an
+uninstall removes what Basecamp's answer names, and nothing when it names
+nothing. A local file is installed only while its SHA-256 is the one Basecamp
+approved.
+
+Installing is not a transaction: a package that fails after its old copy was
+removed leaves neither, and what installed before it stays installed.
+
+A `PackageModules` read whose call failed answers `read` false, and the list
+stays as it was.
 
 The category list has no "All": each app adds its own.
 

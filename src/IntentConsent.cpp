@@ -105,7 +105,19 @@ void IntentConsent::read(const QString& handle)
             return;
         }
         if (r.value(QStringLiteral("state")).toString() != QLatin1String("settled")) {
-            if (w->settledSinceRead) self->read(handle);
+            if (w->settledSinceRead) {
+                self->read(handle);
+                return;
+            }
+            if (w->pollQueued) return;
+            w->pollQueued = true;
+            QTimer::singleShot(self->m_pendingPollMs, self, [self, handle] {
+                if (!self) return;
+                const auto still = self->m_waiting.find(handle);
+                if (still == self->m_waiting.end()) return;
+                still->pollQueued = false;
+                self->read(handle);
+            });
             return;
         }
         const QVariantMap result = r.value(QStringLiteral("result")).toMap();

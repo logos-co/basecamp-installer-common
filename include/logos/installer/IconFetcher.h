@@ -50,7 +50,7 @@ signals:
     void iconRefused(const QString& name, const QString& reason);
 
 private:
-    struct Want { QString name; bool fullBleed = false; };
+    struct Want { QString repositoryUrl; QString name; bool fullBleed = false; };
 
     void scheduleScan();
     void scan();
@@ -74,8 +74,10 @@ private:
     QList<QString> m_queue;
     QSet<QString> m_inFlight;
     QSet<QString> m_refused;
-    // The icon each package shows now.
-    QHash<QString, QString> m_keyByName;
+    // By package (repository and name): the icon it shows now, and the one
+    // the catalog names for it.
+    QHash<QString, QString> m_keyByPackage;
+    QHash<QString, QString> m_wantedByPackage;
 };
 
 }  // namespace logos::installer

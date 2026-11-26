@@ -177,7 +177,7 @@ TEST(a_file_is_identified_by_the_sha256_of_all_of_it) {
 }
 
 TEST(a_local_file_must_still_be_the_one_approved) {
-    const QVariantMap approved{{"rootHash", "h1"}, {"signer", "did:jwk:a"}};
+    const QVariantMap approved{{"rootHash", "h1"}, {"signer", "did:jwk:a"}, {"sha256", "f1"}};
     const QVariantMap same{{"name", "app"}, {"version", "1.0.0"}, {"rootHash", "h1"},
                            {"signatureStatus", "signed"}, {"signerDid", "did:jwk:a"}};
     const auto changed = [](const QVariantMap& inspected, const QVariantMap& approval,
@@ -192,16 +192,18 @@ TEST(a_local_file_must_still_be_the_one_approved) {
     CHECK(changed(withKey(same, "error", "Failed to load LGX package"), approved));
     CHECK(changed(withKey(same, "name", "capability_module"), approved));
     CHECK(changed(withKey(same, "version", "9.9.9"), approved));
-    const QVariantMap unsignedApproval{{"rootHash", "h1"}, {"signer", ""}};
+    const QVariantMap unsignedApproval{{"rootHash", "h1"}, {"signer", ""}, {"sha256", "f1"}};
     QVariantMap plain = withKey(same, "signatureStatus", "unsigned");
     plain.remove("signerDid");
     CHECK(!changed(plain, unsignedApproval));
     CHECK(changed(same, unsignedApproval));
-    // A digest of the whole file, when Basecamp sent one.
-    const QVariantMap withDigest = withKey(approved, "sha256", "f1");
-    CHECK(!changed(same, withDigest));
-    CHECK(changed(same, withDigest, "f2"));
-    CHECK(changed(same, QVariantMap{{"signer", "did:jwk:a"}}));
+    // The digest of the whole file, which an approval must carry.
+    CHECK(changed(same, approved, "f2"));
+    QVariantMap noDigest = approved;
+    noDigest.remove("sha256");
+    CHECK(changed(same, noDigest));
+    CHECK(changed(same, noDigest, QString()));
+    CHECK(changed(same, QVariantMap{{"signer", "did:jwk:a"}, {"sha256", "f1"}}));
 }
 
 // ── Installing ───────────────────────────────────────────────────────────
@@ -252,13 +254,26 @@ TEST(an_install_reply_says_whether_it_installed) {
 }
 
 TEST(an_install_is_checked_on_disk) {
-    const QVariantList installed{QVariantMap{{"name", "app"}, {"version", "2.0.0"}},
-                                 QVariantMap{{"name", "Lib"}, {"moduleName", "lib"}, {"version", "1.0.0"}}};
-    CHECK_EQ(notOnDisk(installed, "app", "2.0.0"), QString());
-    CHECK_EQ(notOnDisk(installed, "lib", "1.0.0"), QString());
-    CHECK(notOnDisk(installed, "app", "2.1.0").contains("v2.0.0 is still on disk"));
-    CHECK(notOnDisk(installed, "gone", "1.0.0").contains("gone is not installed"));
-    CHECK_EQ(notOnDisk(installed, "app", QString()), QString());
+    const auto record = [](const QString& name, const QString& version, const QString& root,
+                           const QString& module = {}) {
+        QVariantMap r{{"name", name}, {"version", version}, {"hashes", QVariantMap{{"root", root}}}};
+        if (!module.isEmpty()) r.insert("moduleName", module);
+        return r;
+    };
+    const QVariantList installed{record("app", "2.0.0", "a2"), record("Lib", "1.0.0", "l1", "lib")};
+    CHECK_EQ(notOnDisk(installed, "app", "2.0.0", "a2"), QString());
+    CHECK_EQ(notOnDisk(installed, "lib", "1.0.0", "l1"), QString());
+    CHECK(notOnDisk(installed, "app", "2.1.0", "a3").contains("v2.0.0 is still on disk"));
+    CHECK(notOnDisk(installed, "gone", "1.0.0", "g").contains("gone is not installed"));
+    // The same version, another build: a reinstall that didn't land.
+    CHECK(notOnDisk(installed, "app", "2.0.0", "other").contains("not the release you approved"));
+    CHECK(!notOnDisk(installed, "app", QString(), "a2").isEmpty());
+    CHECK(!notOnDisk(installed, "app", "2.0.0", QString()).isEmpty());
+    CHECK(!notOnDisk({record("app", "", "a2")}, "app", "2.0.0", "a2").isEmpty());
+    CHECK(!notOnDisk({QVariantMap{{"name", "app"}, {"version", "2.0.0"}}}, "app", "2.0.0", "a2").isEmpty());
+    // An embedded copy beside the one installed.
+    CHECK_EQ(notOnDisk({record("app", "1.0.0", "e1"), record("app", "2.0.0", "a2")}, "app", "2.0.0", "a2"),
+             QString());
 }
 
 TEST(a_replacement_says_which_way_it_goes) {

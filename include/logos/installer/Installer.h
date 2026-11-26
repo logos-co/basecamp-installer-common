@@ -29,7 +29,11 @@ class PackageModel;
 // writes, and each copy checked to be the approved release, signed as
 // approved; then installed in order. A copy the user installed earlier is
 // removed only once its replacement is here and checked. Each install is
-// checked on disk.
+// checked on disk: the approved version and root hash, or it failed.
+//
+// Installing is not a transaction: a package that fails to install after
+// its old copy was removed leaves neither, and what installed before it in
+// the plan stays installed.
 //
 // A local .lgx: staged as a private copy, shown to Basecamp, and installed
 // only while it is the file Basecamp approved.
@@ -54,6 +58,15 @@ public:
     // How long a finished install's rows stay Installed before they show what
     // is on disk.
     void setClearDelay(int ms) { m_clearDelayMs = ms; }
+    // How often, and how long apart, the installed packages are read again
+    // when an install can't be confirmed yet: the read failed, or the call
+    // timed out and may still be running. The request holds its turn and its
+    // files until then.
+    void setConfirmRetries(int retries, int intervalMs)
+    {
+        m_confirmRetries = retries;
+        m_confirmRetryMs = intervalMs;
+    }
 
     // What the person asked for; none of them carries an approval. `choices`
     // ({versions: {name: version}, optional: {name: bool}}, each optional) go
@@ -96,6 +109,8 @@ private:
     void checkCopies(const JobPtr& job, const QVariantList& rows, int index);
     void installRows(const JobPtr& job, const QVariantList& rows, int index);
     void installOne(const JobPtr& job, const QVariantList& rows, int index);
+    void confirmOnDisk(const JobPtr& job, const QVariantList& rows, int index,
+                       const QString& callError, int attempt);
     void succeed(const JobPtr& job);
     void failBefore(const JobPtr& job, const QString& why);
     void failDuring(const JobPtr& job, const QVariantMap& row, const QString& why);
@@ -108,6 +123,8 @@ private:
     InstallProgress* m_progress;
     QPointer<PackageModel> m_packages;
     int m_clearDelayMs = 1500;
+    int m_confirmRetries = 24;
+    int m_confirmRetryMs = 5000;
 
     QHash<QString, int> m_runs;
     QList<JobPtr> m_queue;

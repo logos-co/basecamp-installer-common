@@ -20,6 +20,12 @@ QString keyOf(const QString& repositoryUrl, const QString& name)
     return repositoryUrl + QChar(0x01) + name;
 }
 
+QString releaseKeyOf(const QVariantMap& version)
+{
+    return version.value(QStringLiteral("version")).toString() + QChar(0x1f)
+         + version.value(QStringLiteral("rootHash")).toString();
+}
+
 QString keyOf(const QVariantMap& row)
 {
     return keyOf(row.value(QStringLiteral("repositoryUrl")).toString(),
@@ -494,12 +500,14 @@ void PackageModel::setMissingDependencies(const QString& name, const QStringList
     rebuild();
 }
 
-void PackageModel::setIcon(const QString& name, const QString& url, bool fullBleed)
+void PackageModel::setIcon(const QString& repositoryUrl, const QString& name, const QString& url,
+                           bool fullBleed)
 {
-    const auto it = m_iconByName.constFind(name);
-    if (it != m_iconByName.cend() && it->url == url && it->fullBleed == fullBleed) return;
-    if (url.isEmpty()) m_iconByName.remove(name);
-    else m_iconByName.insert(name, Icon{url, fullBleed});
+    const QString key = keyOf(repositoryUrl, name);
+    const auto it = m_iconByKey.constFind(key);
+    if (it != m_iconByKey.cend() && it->url == url && it->fullBleed == fullBleed) return;
+    if (url.isEmpty()) m_iconByKey.remove(key);
+    else m_iconByKey.insert(key, Icon{url, fullBleed});
     rebuild();
 }
 
@@ -511,9 +519,12 @@ void PackageModel::selectVersion(int row, int versionIndex)
     if (versionIndex < 0 || versionIndex >= count) versionIndex = 0;
     if (r.value(QStringLiteral("selectedVersionIndex")).toInt() == versionIndex) return;
 
+    // The release, not its place: a newer one moves the rest down. The
+    // newest is no pick, and follows what is newest.
     const QString key = keyOf(r);
     if (versionIndex == 0) m_selectedVersionByKey.remove(key);
-    else m_selectedVersionByKey.insert(key, versionIndex);
+    else m_selectedVersionByKey.insert(key, releaseKeyOf(r.value(QStringLiteral("availableVersions"))
+                                                             .toList().at(versionIndex).toMap()));
     logos::installer::selectVersion(r, versionIndex);
     emit dataChanged(index(row), index(row),
                      {SelectedVersionIndexRole, VersionRole, HashRole, SizeRole, DateUpdatedRole,
@@ -691,11 +702,18 @@ QList<QVariantMap> PackageModel::buildRows() const
     for (QVariantMap& row : rows) {
         const QString key = keyOf(row);
         const QString name = str(row, "name");
-        const int pick = m_selectedVersionByKey.value(key, 0);
-        if (pick != 0) logos::installer::selectVersion(row, pick);
-        const auto icon = m_iconByName.constFind(name);
-        row.insert(QStringLiteral("iconUrl"), icon == m_iconByName.cend() ? QString() : icon->url);
-        if (icon != m_iconByName.cend())
+        const auto picked = m_selectedVersionByKey.constFind(key);
+        if (picked != m_selectedVersionByKey.cend()) {
+            const QVariantList versions = row.value(QStringLiteral("availableVersions")).toList();
+            int pick = -1;
+            for (int i = 0; i < versions.size() && pick < 0; ++i)
+                if (releaseKeyOf(versions.at(i).toMap()) == *picked) pick = i;
+            // A release that left the catalog: the newest, until it's back.
+            if (pick > 0) logos::installer::selectVersion(row, pick);
+        }
+        const auto icon = m_iconByKey.constFind(key);
+        row.insert(QStringLiteral("iconUrl"), icon == m_iconByKey.cend() ? QString() : icon->url);
+        if (icon != m_iconByKey.cend())
             row.insert(QStringLiteral("supportsFullBleedIcon"), icon->fullBleed);
         row.insert(QStringLiteral("missingDependencies"), m_missingByName.value(name));
         row.insert(QStringLiteral("isSelected"), installable(row) && m_selectedKeys.contains(key));

@@ -169,11 +169,10 @@ QString fileChanged(const QVariantMap& inspected, const QVariantMap& approvedFil
 {
     const QString signer = str(approvedFile, "signer");
     const QString status = str(inspected, "signatureStatus");
-    // A host that sends no digest of the whole file: its parts alone.
     const QString digest = str(approvedFile, "sha256");
     const bool same = !inspected.contains(QStringLiteral("error"))
         && !str(approvedFile, "rootHash").isEmpty()
-        && (digest.isEmpty() || digest == sha256)
+        && !digest.isEmpty() && digest == sha256
         && str(inspected, "name") == name
         && str(inspected, "version") == version
         && str(inspected, "rootHash") == str(approvedFile, "rootHash")
@@ -229,18 +228,33 @@ bool pluginInstalled(const QVariantMap& reply)
     return reply.contains(QStringLiteral("path")) && str(reply, "error").isEmpty();
 }
 
-QString notOnDisk(const QVariantList& installed, const QString& name, const QString& version)
+QString notOnDisk(const QVariantList& installed, const QString& name, const QString& version,
+                  const QString& rootHash)
 {
+    // An embedded copy may sit beside the one just installed: any record will do.
+    QString onDisk;
+    bool found = false;
     for (const QVariant& v : installed) {
         const QVariantMap record = v.toMap();
         if (str(record, "name") != name && str(record, "moduleName") != name) continue;
-        const QString onDisk = str(record, "version");
-        if (version.isEmpty() || onDisk.isEmpty() || versionCompare(onDisk, version) == 0) return {};
+        found = true;
+        const QString recordVersion = str(record, "version");
+        const QString recordHash =
+            record.value(QStringLiteral("hashes")).toMap().value(QStringLiteral("root")).toString();
+        if (!recordVersion.isEmpty() && versionCompare(recordVersion, version) == 0
+            && !rootHash.isEmpty() && recordHash == rootHash)
+            return {};
+        if (onDisk.isEmpty()) onDisk = recordVersion;
+    }
+    if (!found)
+        return QStringLiteral("The installer reported success, but %1 is not installed on disk.").arg(name);
+    if (!onDisk.isEmpty() && versionCompare(onDisk, version) != 0)
         return QStringLiteral("The installer reported success, but v%1 is still on disk; v%2 was "
                               "not written. Uninstall %3 and install it again.")
             .arg(onDisk, version, name);
-    }
-    return QStringLiteral("The installer reported success, but %1 is not installed on disk.").arg(name);
+    return QStringLiteral("The installer reported success, but the %1 on disk is not the release "
+                          "you approved. Uninstall it and install it again.")
+        .arg(name);
 }
 
 int upgradeMode(const QString& version, const QString& installedVersion)

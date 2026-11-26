@@ -16,7 +16,8 @@ class PackageModules;
 // Keeps a PackageModel filled: the repositories, the catalog, the installed
 // packages and this host's variants, and the downloader's download source and
 // storage state. A load answers in that order, and an answer that a newer
-// load overtook is dropped. The backend forwards the modules' events.
+// load overtook is dropped. A load with a read that failed changes nothing.
+// The backend forwards the modules' events.
 class CatalogClient : public QObject {
     Q_OBJECT
 

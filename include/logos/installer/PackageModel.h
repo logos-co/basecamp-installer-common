@@ -120,9 +120,9 @@ public:
     // The dependencies keeping `name` from loading, as the host reports them.
     void setMissingDependencies(const QString& name, const QStringList& dependencies);
 
-    // The icon a view can show for `name` (for a sandboxed view, the
-    // backend's copy of catalogIconUrl).
-    void setIcon(const QString& name, const QString& url, bool fullBleed);
+    // The icon a view can show for `name` from `repositoryUrl` (for a
+    // sandboxed view, the backend's copy of catalogIconUrl).
+    void setIcon(const QString& repositoryUrl, const QString& name, const QString& url, bool fullBleed);
 
     // Out of range selects the newest.
     void selectVersion(int row, int versionIndex);
@@ -181,8 +181,8 @@ private:
     QStringList m_validVariants;
     bool m_statusIncludesDependencies = false;
     QHash<QString, QStringList> m_missingByName;
-    QHash<QString, Icon> m_iconByName;
-    QHash<QString, int> m_selectedVersionByKey;
+    QHash<QString, Icon> m_iconByKey;
+    QHash<QString, QString> m_selectedVersionByKey;  // the release picked: version, root hash
     QSet<QString> m_selectedKeys;
     QPointer<InstallProgress> m_progress;
 

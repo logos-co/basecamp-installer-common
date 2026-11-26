@@ -50,6 +50,10 @@ struct FakeModules : InstallModules {
     QHash<QString, QVariantMap> installed;   // name -> record
     QStringList installFails, uninstallFails;
     QString installCallError;
+    bool installedAnyway = false;            // a call that failed, but the files landed
+    int readFails = 0;                       // the next reads of the installed packages that fail
+    int readFailsAfterInstall = 0;           // readFails, once an install has landed
+    QHash<QString, QString> diskHashOverride;
     // What getInstalledPackages reports after an install, when not what it wrote.
     QHash<QString, QString> diskVersionOverride;
     QStringList installedPaths;
@@ -126,6 +130,7 @@ struct FakeModules : InstallModules {
         calls << "install " + p.value(0);
         installedPaths << path;
         if (!installCallError.isEmpty()) {
+            if (installedAnyway) addInstalled(p.value(0), p.value(1), p.value(2));
             done({}, installCallError);
             return;
         }
@@ -134,6 +139,7 @@ struct FakeModules : InstallModules {
             return;
         }
         addInstalled(p.value(0), p.value(1), p.value(2));
+        readFails = readFailsAfterInstall;
         done({{"name", p.value(0)}, {"path", "/modules/" + p.value(0)}}, {});
     }
     void uninstallPackage(const QString& name, std::function<void(const QVariantMap&)> done) override
@@ -148,11 +154,19 @@ struct FakeModules : InstallModules {
     }
     void readInstalledPackages(std::function<void(const QVariantList&, bool)> done) override
     {
+        calls << "read";
+        if (readFails > 0) {
+            --readFails;
+            done({}, false);
+            return;
+        }
         QVariantList list;
         for (auto it = installed.cbegin(); it != installed.cend(); ++it) {
             QVariantMap record = it.value();
             if (diskVersionOverride.contains(it.key()))
                 record.insert("version", diskVersionOverride.value(it.key()));
+            if (diskHashOverride.contains(it.key()))
+                record.insert("hashes", QVariantMap{{"root", diskHashOverride.value(it.key())}});
             list.append(record);
         }
         done(list, true);
@@ -207,12 +221,14 @@ struct Run {
     Run()
     {
         installer.setClearDelay(10);
+        installer.setConfirmRetries(3, 5);
         QObject::connect(&installer, &Installer::finished, &installer,
                          [this](const QString& name, Installer::Outcome o, const QString& e) {
                              finished.append({name, o, e});
                          });
     }
     QStringList installs() const { return modules.calls.filter(QRegularExpression("^(install|uninstall) ")); }
+    QStringList actions() const { return modules.calls.filter(QRegularExpression("^(download|verify|inspect|install|uninstall) ")); }
     Installer::Outcome outcome() const { return finished.isEmpty() ? Installer::Outcome(-1) : std::get<1>(finished.last()); }
     QString error() const { return finished.isEmpty() ? QString() : std::get<2>(finished.last()); }
 };
@@ -234,7 +250,7 @@ TEST(installs_exactly_what_basecamp_approved) {
     CHECK_EQ(r.basecamp.asked.value(0).intent, QString::fromLatin1(Consent::kConfirmInstall));
     CHECK_EQ(r.basecamp.asked.value(0).params.value("name").toString(), QStringLiteral("app"));
     CHECK_EQ(r.basecamp.asked.value(0).params.value("repositoryUrl").toString(), kRepo);
-    CHECK_EQ(r.modules.calls, (QStringList{"download dep", "download app", "verify dep", "inspect dep",
+    CHECK_EQ(r.actions(), (QStringList{"download dep", "download app", "verify dep", "inspect dep",
                                            "verify app", "inspect app", "install dep", "install app"}));
     CHECK(r.outcome() == Installer::Outcome::Done);
     CHECK_EQ(r.progress.stage("app"), InstallStage::Installed);
@@ -338,7 +354,7 @@ TEST(a_required_package_that_failed_installs_nothing) {
         return approve(planOf({release("dep", "1.0.0", "d"), release("app", "2.0.0", "a")}));
     };
     r.installer.install("app", "2.0.0", kRepo);
-    CHECK_EQ(r.modules.calls, QStringList{"download dep"});
+    CHECK_EQ(r.actions(), QStringList{"download dep"});
     CHECK(r.outcome() == Installer::Outcome::Failed);
     CHECK_EQ(r.error(), QStringLiteral("dep: timed out"));
     CHECK_EQ(r.progress.stage("app"), InstallStage::Failed);
@@ -463,7 +479,7 @@ TEST(an_upgrade_removes_the_users_copy_only_after_its_replacement_is_checked) {
     r.installer.upgrade("app", "2.0.0", 0, kRepo);
     CHECK_EQ(r.basecamp.asked.value(0).intent, QString::fromLatin1(Consent::kConfirmUpgrade));
     CHECK_EQ(r.basecamp.asked.value(0).params.value("mode").toInt(), 0);
-    CHECK_EQ(r.modules.calls, (QStringList{"download app", "verify app", "inspect app",
+    CHECK_EQ(r.actions(), (QStringList{"download app", "verify app", "inspect app",
                                            "uninstall app", "install app"}));
     CHECK(r.outcome() == Installer::Outcome::Done);
 }
@@ -542,7 +558,86 @@ TEST(a_call_that_timed_out_says_the_package_may_be_installed) {
         return approve(planOf({release("app", "2.0.0", "a")}));
     };
     r.installer.install("app", "2.0.0", kRepo);
+    SPIN(60);
     CHECK(r.error().contains("may in fact be installed"));
+}
+
+// Until the disk says, the request keeps its turn and its files.
+TEST(a_call_that_timed_out_holds_its_turn_and_files_until_the_disk_says) {
+    Run r;
+    r.installer.setConfirmRetries(3, 20);
+    r.modules.serve("app", "2.0.0", "a");
+    r.modules.serve("next", "1.0.0", "n");
+    r.modules.installCallError = "package_manager did not reply within 300 s";
+    r.basecamp.decide = [](const QString&, const QVariantMap& params) {
+        return params.value("name") == "app" ? approve(planOf({release("app", "2.0.0", "a")}))
+                                             : refuse("cancelled");
+    };
+    r.installer.install("app", "2.0.0", kRepo);
+    r.installer.install("next", "1.0.0", kRepo);
+    CHECK(r.finished.isEmpty());
+    CHECK(r.installer.isBusy());
+    CHECK_EQ(r.basecamp.asked.size(), 1);
+    CHECK(QFile::exists(r.modules.installedPaths.value(0)));
+    SPIN(150);
+    CHECK_EQ(std::get<0>(r.finished.value(0)), QStringLiteral("app"));
+    CHECK(std::get<1>(r.finished.value(0)) == Installer::Outcome::Failed);
+    CHECK(!QFile::exists(r.modules.installedPaths.value(0)));
+    CHECK_EQ(r.basecamp.asked.size(), 2);
+}
+
+TEST(a_call_that_timed_out_but_landed_is_done) {
+    Run r;
+    r.modules.serve("app", "2.0.0", "a");
+    r.modules.installCallError = "package_manager did not reply within 300 s";
+    r.modules.installedAnyway = true;
+    r.basecamp.decide = [](const QString&, const QVariantMap&) {
+        return approve(planOf({release("app", "2.0.0", "a")}));
+    };
+    r.installer.install("app", "2.0.0", kRepo);
+    SPIN(20);
+    CHECK(r.outcome() == Installer::Outcome::Done);
+}
+
+// A reinstall of the same version that left the old build in place.
+TEST(an_install_whose_build_on_disk_isnt_the_approved_one_fails) {
+    Run r;
+    r.modules.addInstalled("app", "2.0.0", "old");
+    r.modules.serve("app", "2.0.0", "new");
+    r.modules.diskHashOverride.insert("app", "old");
+    r.basecamp.decide = [](const QString&, const QVariantMap&) {
+        return approve(planOf({release("app", "2.0.0", "new")}));
+    };
+    r.installer.upgrade("app", "2.0.0", 2, kRepo);
+    CHECK(r.outcome() == Installer::Outcome::Failed);
+    CHECK(r.error().contains("not the release you approved"));
+}
+
+TEST(an_install_that_cant_be_read_back_is_read_again) {
+    Run r;
+    r.modules.serve("app", "2.0.0", "a");
+    r.modules.readFailsAfterInstall = 2;
+    r.basecamp.decide = [](const QString&, const QVariantMap&) {
+        return approve(planOf({release("app", "2.0.0", "a")}));
+    };
+    r.installer.install("app", "2.0.0", kRepo);
+    CHECK(r.finished.isEmpty());
+    SPIN(40);
+    CHECK(r.outcome() == Installer::Outcome::Done);
+}
+
+// Not Done on the installer's word alone.
+TEST(an_install_that_never_reads_back_fails) {
+    Run r;
+    r.modules.serve("app", "2.0.0", "a");
+    r.modules.readFailsAfterInstall = 100;
+    r.basecamp.decide = [](const QString&, const QVariantMap&) {
+        return approve(planOf({release("app", "2.0.0", "a")}));
+    };
+    r.installer.install("app", "2.0.0", kRepo);
+    SPIN(60);
+    CHECK(r.outcome() == Installer::Outcome::Failed);
+    CHECK(r.error().contains("could not be read to confirm it"));
 }
 
 // ── One at a time ────────────────────────────────────────────────────────
@@ -599,6 +694,18 @@ TEST(asking_twice_asks_once) {
     CHECK(r.installer.waiting().isEmpty());
 }
 
+// Another version, source or pick is not a double click.
+TEST(asking_for_something_else_is_another_request) {
+    Run r;
+    r.basecamp.hold = true;
+    r.installer.install("a", "1.0.0", kRepo);
+    r.installer.install("a", "2.0.0", kRepo);
+    r.installer.install("a", "2.0.0", "https://other.example");
+    r.installer.install("a", "2.0.0", "https://other.example", {{"optional", QVariantMap{{"x", true}}}});
+    r.installer.install("a", "2.0.0", "https://other.example", {{"optional", QVariantMap{{"x", true}}}});
+    CHECK_EQ(r.installer.waiting(), (QStringList{"a", "a", "a"}));
+}
+
 // ── A local file ─────────────────────────────────────────────────────────
 
 TEST(a_local_file_is_installed_from_a_private_copy_as_approved) {
@@ -625,6 +732,17 @@ TEST(a_local_file_that_changed_after_approval_installs_nothing) {
     const QString picked = r.modules.writeFile("picked.lgx", "tool|1.0.0|t|");
     r.basecamp.decide = [&](const QString&, const QVariantMap&) {
         return approve({{"file", QVariantMap{{"rootHash", "t"}, {"signer", ""}, {"sha256", "not-this-file"}}}});
+    };
+    r.installer.installFile(picked);
+    CHECK(r.installs().isEmpty());
+    CHECK(r.error().contains("The file changed after you approved it"));
+}
+
+TEST(a_local_file_approved_without_its_digest_installs_nothing) {
+    Run r;
+    const QString picked = r.modules.writeFile("picked.lgx", "tool|1.0.0|t|");
+    r.basecamp.decide = [](const QString&, const QVariantMap&) {
+        return approve({{"file", QVariantMap{{"rootHash", "t"}, {"signer", ""}}}});
     };
     r.installer.installFile(picked);
     CHECK(r.installs().isEmpty());
@@ -671,7 +789,9 @@ TEST(uninstalling_asks_first_and_reports_each_package) {
     r.modules.addInstalled("a", "1.0.0", "ha");
     r.modules.addInstalled("b", "1.0.0", "hb");
     r.modules.uninstallFails << "b";
-    r.basecamp.decide = [](const QString&, const QVariantMap&) { return approve({}); };
+    r.basecamp.decide = [](const QString&, const QVariantMap&) {
+        return approve({{"names", QStringList{"a", "b"}}});
+    };
     r.installer.uninstall({"a", "b"});
     CHECK_EQ(r.basecamp.asked.value(0).intent, QString::fromLatin1(Consent::kConfirmUninstall));
     CHECK_EQ(r.basecamp.asked.value(0).params.value("names").toStringList(), (QStringList{"a", "b"}));
@@ -694,6 +814,20 @@ TEST(an_uninstall_removes_what_basecamp_approved) {
     CHECK_EQ(r.basecamp.asked.value(0).params.value("names").toStringList(), QStringList{"app"});
     CHECK_EQ(r.installs(), (QStringList{"uninstall app", "uninstall dep"}));
     CHECK_EQ(r.finished.size(), 2);
+}
+
+// An approval that doesn't name what goes removes nothing.
+TEST(an_uninstall_approved_without_names_removes_nothing) {
+    for (const QVariantMap& data : {QVariantMap{}, QVariantMap{{"names", QStringList{}}},
+                                    QVariantMap{{"names", QStringList{"app", ""}}}}) {
+        Run r;
+        r.modules.addInstalled("app", "1.0.0", "ha");
+        r.basecamp.decide = [data](const QString&, const QVariantMap&) { return approve(data); };
+        r.installer.uninstall({"app"});
+        CHECK(r.installs().isEmpty());
+        CHECK(r.outcome() == Installer::Outcome::Failed);
+        CHECK(r.error().contains("did not say what to remove"));
+    }
 }
 
 TEST(a_cancelled_uninstall_removes_nothing) {
