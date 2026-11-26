@@ -10,7 +10,9 @@ namespace logos::installer {
 
 // What installing calls on package_downloader and package_manager, as a
 // backend reaches them through its typed wrappers. Every call answers once,
-// on the backend's thread, within the backend's own deadline.
+// on the backend's thread, within the backend's own deadline. package_manager
+// runs its calls one at a time in the order sent, so a read that answers was
+// run after every call sent before it had ended.
 class InstallModules {
 public:
     virtual ~InstallModules() = default;

@@ -253,4 +253,27 @@ TEST(settled_while_reading_is_read_again) {
     CHECK(asked.answer.approved);
 }
 
+// A settled event that never came: a pending request is read again, slowly.
+TEST(a_lost_settled_event_is_caught_by_reading_again) {
+    Intents intents;
+    IntentConsent consent(intents.request(), intents.result());
+    consent.setPendingPollInterval(10);
+    Asked asked;
+    consent.ask("basecamp.packages.confirm_install", {}, asked.callback());
+    CHECK(!asked.answered);
+    SPIN(25);
+    CHECK(!asked.answered);
+    const int readsWhilePending = intents.reads.size();
+    CHECK(readsWhilePending >= 2);
+    CHECK(readsWhilePending <= 4);
+    intents.settled.insert("h1", {{"ok", true}, {"data", kPlan}});
+    SPIN(25);
+    CHECK(asked.answered);
+    CHECK(asked.answer.approved);
+    CHECK_EQ(consent.waitingCount(), 0);
+    const int reads = intents.reads.size();
+    SPIN(30);
+    CHECK_EQ(intents.reads.size(), reads);
+}
+
 CHECK_MAIN()

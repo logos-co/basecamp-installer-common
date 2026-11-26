@@ -38,6 +38,9 @@ public:
     // How often a result that couldn't be read is asked for again, and how
     // long apart, before the request counts as failed.
     void setReadRetries(int retries, int intervalMs);
+    // How long apart a request still pending is read again, in case its
+    // settled event is lost.
+    void setPendingPollInterval(int ms) { m_pendingPollMs = ms; }
 
 private:
     struct Waiting {
@@ -45,6 +48,7 @@ private:
         std::function<void(const Answer&)> answered;
         bool reading = false;
         bool settledSinceRead = false;
+        bool pollQueued = false;
         int failedReads = 0;
     };
 
@@ -56,6 +60,7 @@ private:
     QHash<QString, Waiting> m_waiting;
     int m_readRetries = 3;
     int m_readRetryMs = 1000;
+    int m_pendingPollMs = 10000;
 };
 
 }  // namespace logos::installer

@@ -432,6 +432,27 @@ TEST(a_selected_version_survives_a_refresh) {
     CHECK_EQ(roleOf(model, "chat", "version").toString(), QStringLiteral("1.1.0"));
 }
 
+// A newer release moves the others down: the pick stays the release picked.
+TEST(a_selected_version_stays_put_when_a_newer_one_is_published) {
+    PackageModel model;
+    model.setCatalog({withOlderVersion(catalogRow("repo1", "chat", "1.2.0", "H12"), "1.1.0", "H11")});
+    model.selectVersion(0, 1);
+    model.setCatalog({withOlderVersion(withOlderVersion(catalogRow("repo1", "chat", "1.3.0", "H13"),
+                                                        "1.2.0", "H12"), "1.1.0", "H11")});
+    CHECK_EQ(roleOf(model, "chat", "version").toString(), QStringLiteral("1.1.0"));
+    CHECK_EQ(roleOf(model, "chat", "selectedVersionIndex").toInt(), 2);
+}
+
+// The newest picked is no pick: it follows the newest.
+TEST(the_newest_selected_follows_a_newer_one) {
+    PackageModel model;
+    model.setCatalog({withOlderVersion(catalogRow("repo1", "chat", "1.2.0", "H12"), "1.1.0", "H11")});
+    model.selectVersion(0, 1);
+    model.selectVersion(0, 0);
+    model.setCatalog({withOlderVersion(catalogRow("repo1", "chat", "1.3.0", "H13"), "1.2.0", "H12")});
+    CHECK_EQ(roleOf(model, "chat", "version").toString(), QStringLiteral("1.3.0"));
+}
+
 // The older version left the catalog: the newest is selected again.
 TEST(a_selected_version_that_left_falls_back_to_the_newest) {
     PackageModel model;
@@ -475,7 +496,7 @@ TEST(a_row_shows_the_icon_it_was_given_and_keeps_it) {
              QStringLiteral("https://r.example/wallet.png"));
 
     Recorder r(model);
-    model.setIcon("wallet_ui", "data:image/png;base64,AAAA", true);
+    model.setIcon("repo1", "wallet_ui", "data:image/png;base64,AAAA", true);
     CHECK_EQ(r.changedRows, QList<int>{rowOf(model, "wallet_ui")});
     CHECK_EQ(roleOf(model, "wallet_ui", "iconUrl").toString(), QStringLiteral("data:image/png;base64,AAAA"));
     CHECK(roleOf(model, "wallet_ui", "supportsFullBleedIcon").toBool());

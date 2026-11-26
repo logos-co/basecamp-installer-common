@@ -51,7 +51,7 @@ QString releaseChanged(const QVariantMap& inspected, const QVariantMap& row);
 
 // Why the file inspectPackage() describes as `inspected`, whose SHA-256 is
 // `sha256`, is not the one approved ({rootHash, signer, sha256}) as `name` at
-// `version`, or empty.
+// `version`, or empty. An approval without the file's digest approves nothing.
 QString fileChanged(const QVariantMap& inspected, const QVariantMap& approvedFile,
                     const QString& name, const QString& version, const QString& sha256);
 
@@ -73,8 +73,9 @@ bool removeBeforeInstall(const QVariantList& installed, const QString& name);
 bool pluginInstalled(const QVariantMap& reply);
 
 // Why `installed` (getInstalledPackages() after an install) doesn't hold
-// `name` at `version`, or empty.
-QString notOnDisk(const QVariantList& installed, const QString& name, const QString& version);
+// `name` at `version` with `rootHash`, or empty.
+QString notOnDisk(const QVariantList& installed, const QString& name, const QString& version,
+                  const QString& rootHash);
 
 // confirm_upgrade's mode for replacing `installedVersion` with `version`:
 // 0 upgrade, 1 downgrade, 2 the same version again.

@@ -27,6 +27,7 @@ struct FakeModules : PackageModules {
     QString downloadSource = "any";
     QList<QVariantMap> storage{QVariantMap{{"state", "running"}}};
     QString refreshError;
+    QStringList failing;   // reads whose call fails
 
     void answer(std::function<void()> f)
     {
@@ -43,15 +44,17 @@ struct FakeModules : PackageModules {
         calls << "start";
         answer(done);
     }
-    void listRepositories(std::function<void(const QVariantList&)> done) override
+    void listRepositories(std::function<void(const QVariantList&, bool)> done) override
     {
         calls << "listRepositories";
-        answer([done, r = repositories] { done(r); });
+        const bool read = !failing.contains("listRepositories");
+        answer([done, r = repositories, read] { done(read ? r : QVariantList{}, read); });
     }
-    void getCatalog(std::function<void(const QVariantList&)> done) override
+    void getCatalog(std::function<void(const QVariantList&, bool)> done) override
     {
         calls << "getCatalog";
-        answer([done, c = catalog] { done(c); });
+        const bool read = !failing.contains("getCatalog");
+        answer([done, c = catalog, read] { done(read ? c : QVariantList{}, read); });
     }
     void refreshCatalog(std::function<void(const QString&)> done) override
     {
@@ -69,15 +72,17 @@ struct FakeModules : PackageModules {
         const QVariantMap s = storage.size() > 1 ? storage.takeFirst() : storage.value(0);
         answer([done, s] { done(s); });
     }
-    void getInstalledPackages(std::function<void(const QVariantList&)> done) override
+    void getInstalledPackages(std::function<void(const QVariantList&, bool)> done) override
     {
         calls << "getInstalledPackages";
-        answer([done, i = installedPackages] { done(i); });
+        const bool read = !failing.contains("getInstalledPackages");
+        answer([done, i = installedPackages, read] { done(read ? i : QVariantList{}, read); });
     }
-    void getValidVariants(std::function<void(const QStringList&)> done) override
+    void getValidVariants(std::function<void(const QStringList&, bool)> done) override
     {
         calls << "getValidVariants";
-        answer([done, v = variants] { done(v); });
+        const bool read = !failing.contains("getValidVariants");
+        answer([done, v = variants, read] { done(read ? v : QStringList{}, read); });
     }
 };
 
@@ -265,6 +270,46 @@ TEST(an_empty_storage_answer_changes_nothing) {
     CatalogClient client(&modules, &model);
     client.load();
     CHECK_EQ(client.storageState(), QString());
+}
+
+// A module that didn't answer is not an empty list: what was shown stays.
+TEST(a_load_with_a_failed_read_keeps_the_last_list) {
+    for (const QString& call : {"listRepositories", "getCatalog", "getInstalledPackages", "getValidVariants"}) {
+        FakeModules modules;
+        PackageModel model;
+        CatalogClient client(&modules, &model);
+        client.load();
+        CHECK_EQ(model.rowCount(), 1);
+        CHECK(model.index(0).data(PackageModel::IsInstalledRole).toBool());
+        int loaded = 0, failed = 0;
+        QObject::connect(&client, &CatalogClient::loaded, &client, [&] { ++loaded; });
+        QObject::connect(&client, &CatalogClient::loadFailed, &client, [&] { ++failed; });
+        modules.failing << call;
+        client.refresh();
+        CHECK_EQ(loaded, 0);
+        CHECK_EQ(failed, 1);
+        CHECK(!client.loadError().isEmpty());
+        CHECK(!client.isLoading());
+        CHECK_EQ(model.rowCount(), 1);
+        CHECK(model.index(0).data(PackageModel::IsInstalledRole).toBool());
+        CHECK_EQ(client.repositoryCount(), 2);
+    }
+}
+
+// A first load that fails says so; the next good one clears it.
+TEST(a_first_load_that_fails_says_so) {
+    FakeModules modules;
+    PackageModel model;
+    CatalogClient client(&modules, &model);
+    modules.failing << "getCatalog";
+    client.load();
+    CHECK(!client.hasLoaded());
+    CHECK(!client.isLoading());
+    CHECK_EQ(client.loadError(), QStringLiteral("the catalog"));
+    modules.failing.clear();
+    client.refresh();
+    CHECK(client.hasLoaded());
+    CHECK_EQ(client.loadError(), QString());
 }
 
 CHECK_MAIN()

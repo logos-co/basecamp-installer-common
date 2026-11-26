@@ -37,6 +37,7 @@ struct Installer::Job {
     QHash<QString, QString> uninstallErrors;
     int run = 0;                // which request for `name` this is
     bool shownQueued = false;   // its row says Queued while it waits
+    bool keepFiles = false;     // an install that never confirmed may still read them
 };
 
 namespace {
@@ -116,9 +117,12 @@ void Installer::uninstall(const QStringList& names)
 
 void Installer::enqueue(JobPtr job)
 {
-    // Asked twice (a double click): once is what was meant.
+    // Asked twice (a double click): once is what was meant. Another version,
+    // source or pick is another request.
     const auto same = [&job](const JobPtr& other) {
         return other && other->kind == job->kind && other->name == job->name
+            && other->version == job->version && other->repositoryUrl == job->repositoryUrl
+            && other->mode == job->mode && other->choices == job->choices
             && other->path == job->path && other->names == job->names;
     };
     if (same(m_current) || std::any_of(m_queue.cbegin(), m_queue.cend(), same)) return;
@@ -183,8 +187,14 @@ void Installer::askCatalog(const JobPtr& job)
             return;
         }
         job->plan = answer.data.value(QStringLiteral("plan")).toList();
-        self->m_modules->readInstalledPackages([self, job](const QVariantList& installed, bool) {
+        self->m_modules->readInstalledPackages([self, job](const QVariantList& installed, bool read) {
             if (!self) return;
+            // Not knowing what is on disk is not knowing what to fetch.
+            if (!read) {
+                self->failBefore(job, QStringLiteral("The installed packages could not be read, so "
+                                                     "nothing was installed. Try again."));
+                return;
+            }
             // An install of what is on disk already fetches only what changed
             // under it (a dependency); an upgrade fetches its package again.
             job->requested = stillToInstall(job->plan, installed,
@@ -316,7 +326,14 @@ void Installer::installRows(const JobPtr& job, const QVariantList& rows, int ind
     QPointer<Installer> self(this);
     m_modules->readInstalledPackages([self, job, rows, index, row, name](const QVariantList& installed, bool read) {
         if (!self) return;
-        if (!read || !removeBeforeInstall(installed, name)) {
+        // Not knowing whether the user's copy is there is not knowing whether
+        // it goes first.
+        if (!read) {
+            self->failDuring(job, row, QStringLiteral("The installed packages could not be read, so "
+                                                      "it was not installed. Try again."));
+            return;
+        }
+        if (!removeBeforeInstall(installed, name)) {
             self->installOne(job, rows, index);
             return;
         }
@@ -343,9 +360,9 @@ void Installer::installOne(const JobPtr& job, const QVariantList& rows, int inde
         [self, job, rows, index, row](const QVariantMap& reply, const QString& callError) {
             if (!self) return;
             if (!callError.isEmpty()) {
-                // The deadline cancels nothing: the files may well be on disk.
-                self->failDuring(job, row, QStringLiteral("%1; the package may in fact be installed, "
-                                                          "check before retrying").arg(callError));
+                // The deadline cancels nothing: the install may still be
+                // under way, so the disk decides.
+                self->confirmOnDisk(job, rows, index, callError, 0);
                 return;
             }
             if (!pluginInstalled(reply)) {
@@ -354,18 +371,46 @@ void Installer::installOne(const JobPtr& job, const QVariantList& rows, int inde
                 return;
             }
             // The installer's word for it; the disk has the last one.
-            self->m_modules->readInstalledPackages(
-                [self, job, rows, index, row](const QVariantList& installed, bool read) {
-                    if (!self) return;
-                    const QString missing = read ? notOnDisk(installed, str(row, "name"), str(row, "version"))
-                                                 : QString();
-                    if (!missing.isEmpty()) {
-                        self->failDuring(job, row, missing);
-                        return;
-                    }
-                    self->m_progress->finish(str(row, "name"));
-                    self->installRows(job, rows, index + 1);
+            self->confirmOnDisk(job, rows, index, {}, 0);
+        });
+}
+
+void Installer::confirmOnDisk(const JobPtr& job, const QVariantList& rows, int index,
+                              const QString& callError, int attempt)
+{
+    const QVariantMap row = rows.at(index).toMap();
+    QPointer<Installer> self(this);
+    m_modules->readInstalledPackages(
+        [self, job, rows, index, row, callError, attempt](const QVariantList& installed, bool read) {
+            if (!self) return;
+            const QString missing = read ? notOnDisk(installed, str(row, "name"), str(row, "version"),
+                                                     str(row, "rootHash"))
+                                         : QString();
+            if (read && missing.isEmpty()) {
+                self->m_progress->finish(str(row, "name"));
+                self->installRows(job, rows, index + 1);
+                return;
+            }
+            // package_manager runs one call at a time, in order: a read that
+            // answered came after the install ended, so the disk has the word.
+            if (read) {
+                self->failDuring(job, row, missing);
+                return;
+            }
+            // Still running, or package_manager is gone. The next request's
+            // calls queue behind it either way; its files stay while we do.
+            if (attempt < self->m_confirmRetries) {
+                QTimer::singleShot(self->m_confirmRetryMs, self, [self, job, rows, index, callError, attempt] {
+                    if (self) self->confirmOnDisk(job, rows, index, callError, attempt + 1);
                 });
+                return;
+            }
+            job->keepFiles = true;
+            self->failDuring(job, row, callError.isEmpty()
+                ? QStringLiteral("package_manager reported it installed, but its installed packages "
+                                 "could not be read to confirm it; check before retrying")
+                : QStringLiteral("%1; the package may in fact be installed, check before retrying")
+                      .arg(callError));
         });
 }
 
@@ -471,10 +516,15 @@ void Installer::askUninstall(const JobPtr& job)
                 self->endUnapproved(job, answer.error);
                 return;
             }
-            // What Basecamp approved: an app, and what only it needed. A
-            // Basecamp that doesn't say approved what was asked.
+            // What Basecamp approved: an app, and what only it needed.
             const QStringList approved = answer.data.value(QStringLiteral("names")).toStringList();
-            if (!approved.isEmpty()) job->names = approved;
+            if (approved.isEmpty() || approved.contains(QString())) {
+                self->end(job, Outcome::Failed, QStringLiteral("Basecamp did not say what to remove, "
+                                                               "so nothing was removed."));
+                return;
+            }
+            job->names = approved;
+            job->names.removeDuplicates();
             self->uninstallNext(job, 0);
         });
 }
@@ -545,9 +595,13 @@ void Installer::endUnapproved(const JobPtr& job, const QString& error)
 
 void Installer::end(const JobPtr& job, Outcome outcome, const QString& error)
 {
-    if (job->kind == Job::Kind::File && !job->path.isEmpty()
-        && m_staging && QFileInfo(job->path).absolutePath() == QDir(m_staging->path()).absolutePath())
+    if (job->keepFiles) {
+        // m_staging, holding a local file's copy, lives as long as we do.
+        if (job->copies) m_kept.push_back(std::move(job->copies));
+    } else if (job->kind == Job::Kind::File && !job->path.isEmpty() && m_staging
+               && QFileInfo(job->path).absolutePath() == QDir(m_staging->path()).absolutePath()) {
         QFile::remove(job->path);
+    }
     job->copies.reset();
     if (m_current == job) m_current.reset();
     if (job->kind == Job::Kind::Uninstall && outcome == Outcome::Done) {

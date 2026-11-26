@@ -50,13 +50,15 @@ signals:
     void iconRefused(const QString& name, const QString& reason);
 
 private:
-    struct Want { QString name; bool fullBleed = false; };
+    struct Want { QString repositoryUrl; QString name; bool fullBleed = false; };
 
     void scheduleScan();
     void scan();
     void startNext();
     void fetched(const QString& key, const QString& sha256, const QByteArray& data,
                  const QString& error);
+    // The icon the model names for the package now, or "".
+    QString wantedKey(const QString& repositoryUrl, const QString& name) const;
     QString diskPath(const QString& sha256) const;
     void defaultFetch(const QUrl& url, Done done);
 
@@ -74,8 +76,8 @@ private:
     QList<QString> m_queue;
     QSet<QString> m_inFlight;
     QSet<QString> m_refused;
-    // The icon each package shows now.
-    QHash<QString, QString> m_keyByName;
+    // By package (repository and name): the icon it shows now.
+    QHash<QString, QString> m_keyByPackage;
 };
 
 }  // namespace logos::installer

@@ -302,4 +302,84 @@ TEST(only_http_urls_are_fetched) {
     CHECK(iconOf(model, "wallet_ui").isEmpty());
 }
 
+QString iconIn(const PackageModel& model, const QString& repositoryUrl, const QString& name)
+{
+    return model.index(model.rowOf(name, repositoryUrl)).data(PackageModel::IconUrlRole).toString();
+}
+
+// Two repositories, one name: each row shows its own publisher's icon.
+TEST(the_same_name_from_two_repositories_shows_each_its_own_icon) {
+    const QString otherUrl = QStringLiteral("https://other.example/icons/wallet.png");
+    const QByteArray mine = png(), theirs = png(128, 128);
+    FakeServer server;
+    server.files.insert(kUrl, mine);
+    server.files.insert(otherUrl, theirs);
+    PackageModel model;
+    model.setCatalog({withIcon(catalogRow("r1", "wallet_ui", "1.0", "H"), kUrl, sha(mine)),
+                      withIcon(catalogRow("r2", "wallet_ui", "1.0", "H2"), otherUrl, sha(theirs))});
+    IconFetcher fetcher(&model);
+    fetcher.setFetch(server.fetch());
+    SPIN(20);
+    CHECK_EQ(iconIn(model, "r1", "wallet_ui"), "data:image/png;base64," + QString::fromLatin1(mine.toBase64()));
+    CHECK_EQ(iconIn(model, "r2", "wallet_ui"), "data:image/png;base64," + QString::fromLatin1(theirs.toBase64()));
+}
+
+// An icon that comes after the catalog named another is not shown.
+TEST(an_icon_the_catalog_replaced_while_it_came_is_not_shown) {
+    const QString newUrl = QStringLiteral("https://repo.example/icons/wallet-2.png");
+    const QByteArray before = png(), after = png(128, 128);
+    FakeServer server;
+    server.hold = true;
+    server.files.insert(kUrl, before);
+    server.files.insert(newUrl, after);
+    PackageModel model;
+    model.setCatalog({withIcon(catalogRow("r", "wallet_ui", "1.0", "H"), kUrl, sha(before))});
+    IconFetcher fetcher(&model);
+    fetcher.setFetch(server.fetch());
+    SPIN(10);
+    CHECK_EQ(server.held.size(), 1);
+    model.setCatalog({withIcon(catalogRow("r", "wallet_ui", "1.1", "H2"), newUrl, sha(after))});
+    SPIN(10);
+    // The new icon lands first, then the old one.
+    server.held.takeLast()();
+    server.flush();
+    CHECK_EQ(iconOf(model, "wallet_ui"), "data:image/png;base64," + QString::fromLatin1(after.toBase64()));
+}
+
+// A new icon that is refused: the old one doesn't stay in its place.
+TEST(an_icon_replaced_by_one_that_is_refused_goes) {
+    const QString newUrl = QStringLiteral("https://repo.example/icons/wallet-2.png");
+    const QByteArray before = png();
+    FakeServer server;
+    server.files.insert(kUrl, before);
+    server.files.insert(newUrl, "not a png");
+    PackageModel model;
+    model.setCatalog({withIcon(catalogRow("r", "wallet_ui", "1.0", "H"), kUrl, sha(before))});
+    IconFetcher fetcher(&model);
+    fetcher.setFetch(server.fetch());
+    SPIN(10);
+    CHECK(!iconOf(model, "wallet_ui").isEmpty());
+    model.setCatalog({withIcon(catalogRow("r", "wallet_ui", "1.1", "H2"), newUrl, sha("not a png"))});
+    SPIN(10);
+    CHECK_EQ(iconOf(model, "wallet_ui"), QString());
+}
+
+// A reply that lands before the next scan is checked against the model.
+TEST(an_old_icon_arriving_before_the_next_scan_is_not_shown) {
+    const QString newUrl = QStringLiteral("https://repo.example/icons/wallet-2.png");
+    const QByteArray before = png(), after = png(128, 128);
+    FakeServer server;
+    server.hold = true;
+    server.files.insert(kUrl, before);
+    server.files.insert(newUrl, after);
+    PackageModel model;
+    model.setCatalog({withIcon(catalogRow("r", "wallet_ui", "1.0", "H"), kUrl, sha(before))});
+    IconFetcher fetcher(&model);
+    fetcher.setFetch(server.fetch());
+    SPIN(10);
+    model.setCatalog({withIcon(catalogRow("r", "wallet_ui", "1.1", "H2"), newUrl, sha(after))});
+    server.flush();
+    CHECK_EQ(iconOf(model, "wallet_ui"), QString());
+}
+
 CHECK_MAIN()

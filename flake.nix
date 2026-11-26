@@ -17,9 +17,12 @@
       semverHeaders = system: logos-package.packages.${system}.headers;
 
       # What a consumer stages and compiles in: include/, src/, cmake/, the
-      # JavaScript under qml/Installer, and tools/shared-words-check.
+      # JavaScript under qml/Installer, and tools/shared-words-check, with the
+      # licenses.
       source = pkgs: pkgs.runCommand "basecamp-installer-common-src" { } ''
         mkdir -p $out
+        cp ${./LICENSE-APACHE-v2} $out/LICENSE-APACHE-v2
+        cp ${./LICENSE-MIT} $out/LICENSE-MIT
         cp -r ${./include} $out/include
         cp -r ${./src} $out/src
         cp -r ${./cmake} $out/cmake
