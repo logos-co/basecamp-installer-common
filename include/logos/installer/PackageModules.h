@@ -1,0 +1,36 @@
+#pragma once
+
+#include <QString>
+#include <QStringList>
+#include <QVariantList>
+#include <QVariantMap>
+
+#include <functional>
+
+namespace logos::installer {
+
+// package_downloader and package_manager, as a backend reaches them: through
+// its typed wrappers, so the library makes no module calls of its own. Every
+// call answers once through its callback, on the backend's thread. A module
+// that doesn't know a method answers with an empty value.
+class PackageModules {
+public:
+    virtual ~PackageModules() = default;
+
+    // package_downloader.start(); `done` whatever it answers (a downloader
+    // that predates start() refuses it and is running already).
+    virtual void startDownloader(std::function<void()> done) = 0;
+    virtual void listRepositories(std::function<void(const QVariantList&)> done) = 0;
+    virtual void getCatalog(std::function<void(const QVariantList&)> done) = 0;
+    // package_downloader.refreshCatalog(): fetch every repository again.
+    // `error` is empty on success.
+    virtual void refreshCatalog(std::function<void(const QString& error)> done) = 0;
+    virtual void getDownloadSource(std::function<void(const QString&)> done) = 0;
+    // {state, error}
+    virtual void getStorageState(std::function<void(const QVariantMap&)> done) = 0;
+
+    virtual void getInstalledPackages(std::function<void(const QVariantList&)> done) = 0;
+    virtual void getValidVariants(std::function<void(const QStringList&)> done) = 0;
+};
+
+}  // namespace logos::installer

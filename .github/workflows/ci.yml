@@ -1,0 +1,20 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  checks:
+    name: ${{ matrix.check }} (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        check: [unit, qml, shared-words]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: logos-co/setup-nix-cache-action@v1
+      - run: nix build -L ".#checks.$(nix eval --impure --raw --expr builtins.currentSystem).${{ matrix.check }}"

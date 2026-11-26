@@ -1,0 +1,91 @@
+#!/usr/bin/env python3
+"""Fail when a phrase the shared JavaScript says appears in an app's own QML.
+
+usage: shared-words-check <shared qml/Installer dir> <app qml dir>...
+         [--skip <dir>]... [--allow <file>]
+
+Every qsTr() phrase in the shared files is the shared words: an app shows it
+by calling the shared file, never by writing it again. --skip names
+directories that hold a copy of the shared files themselves. --allow names a
+file of exceptions, one per line, "<path ending>: <phrase>" with a reason after
+" # ", for an unrelated use of the same words.
+"""
+
+import json
+import pathlib
+import re
+import sys
+
+LITERAL = r'"(?:[^"\\\n]|\\.)*"'
+QSTR = re.compile(r'qsTr\(\s*(' + LITERAL + r'(?:\s*\+\s*' + LITERAL + r')*)\s*[,)]')
+
+
+def unquote(literal):
+    try:
+        return json.loads(literal)
+    except ValueError:
+        return literal[1:-1]
+
+
+def phrases(text):
+    for m in QSTR.finditer(text):
+        phrase = "".join(unquote(p) for p in re.findall(LITERAL, m.group(1)))
+        yield text.count("\n", 0, m.start()) + 1, phrase
+
+
+def main(argv):
+    args, skip, allow_file = [], [], None
+    it = iter(argv)
+    for a in it:
+        if a == "--skip":
+            skip.append(pathlib.Path(next(it)).resolve())
+        elif a == "--allow":
+            allow_file = pathlib.Path(next(it))
+        else:
+            args.append(pathlib.Path(a))
+    if len(args) < 2:
+        print(__doc__, file=sys.stderr)
+        return 2
+    shared_dir, app_dirs = args[0], args[1:]
+
+    shared = {}
+    for f in sorted(shared_dir.glob("*.js")):
+        for _, phrase in phrases(f.read_text(encoding="utf-8")):
+            shared.setdefault(phrase, f.name)
+    if not shared:
+        print(f"shared-words-check: no qsTr() phrases in {shared_dir}", file=sys.stderr)
+        return 2
+
+    allowed = []
+    if allow_file:
+        for line in allow_file.read_text(encoding="utf-8").splitlines():
+            line = line.split(" # ", 1)[0].strip()
+            if line and not line.startswith("#") and ": " in line:
+                path, phrase = line.split(": ", 1)
+                allowed.append((path.strip(), phrase))
+
+    copies = []
+    for d in app_dirs:
+        for f in sorted(list(d.rglob("*.qml")) + list(d.rglob("*.js"))):
+            resolved = f.resolve()
+            if any(s == resolved or s in resolved.parents for s in skip):
+                continue
+            for line, phrase in phrases(f.read_text(encoding="utf-8")):
+                if phrase not in shared:
+                    continue
+                if any(str(f).endswith(p) and phrase == ph for p, ph in allowed):
+                    continue
+                copies.append(f"{f}:{line}: \"{phrase}\" is in the shared {shared[phrase]}")
+
+    for c in copies:
+        print(c)
+    if copies:
+        print(f"shared-words-check: {len(copies)} shared phrase(s) written again; "
+              "call the shared file instead", file=sys.stderr)
+        return 1
+    print(f"shared-words-check: none of {len(shared)} shared phrases written again")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

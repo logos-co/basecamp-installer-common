@@ -1,0 +1,3 @@
+# The fixture's two copies, allowed by name.
+copied/Copied.qml: Finding peers… # the same words, for another reason
+copied/Copied.qml: Downloads are set to Logos Storage only, so apps can't be downloaded. You can enable GitHub downloads in Settings → Repositories.
