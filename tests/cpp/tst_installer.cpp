@@ -773,6 +773,8 @@ TEST(a_request_waiting_its_turn_shows_as_queued) {
     CHECK(!r.progress.has("a"));
     r.installer.install("b", "1.0.0", kRepo);
     CHECK_EQ(r.progress.stage("b"), InstallStage::Queued);
+    // Its plan too, which its tile shows: it read Downloading.
+    CHECK_EQ(r.progress.planStage("b"), InstallStage::Queued);
     CHECK(r.progress.belongsTo("b", kRepo));
     CHECK(!r.progress.belongsTo("b", "https://other.example/logos-repo.json"));
     r.basecamp.answerNext(refuse("cancelled"));

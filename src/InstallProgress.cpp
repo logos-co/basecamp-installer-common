@@ -116,7 +116,7 @@ quint64 InstallProgress::planDownloadTotal(const QString& name) const
 InstallStage InstallProgress::planStage(const QString& name) const
 {
     bool matched = false, failed = false, installing = false, onWire = false,
-         fetched = false, installed = false;
+         fetched = false, installed = false, waiting = false;
     int count = 0, installedCount = 0;
     for (auto it = m_ops.cbegin(); it != m_ops.cend(); ++it) {
         if (!it->topLevels.contains(name)) continue;
@@ -126,6 +126,10 @@ InstallStage InstallProgress::planStage(const QString& name) const
         case InstallStage::Failed:      failed = true;     break;
         case InstallStage::Installing:  installing = true; break;
         case InstallStage::Queued:
+            // Its turn hasn't come: nothing of it is on its way.
+            if (it->waiting) waiting = true;
+            else onWire = true;
+            break;
         case InstallStage::Downloading: onWire = true;     break;
         case InstallStage::Downloaded:  fetched = true;    break;
         case InstallStage::Installed:   installed = true; ++installedCount; break;
@@ -135,6 +139,7 @@ InstallStage InstallProgress::planStage(const QString& name) const
     if (!matched) return stage(name);
     if (failed) return InstallStage::Failed;
     if (onWire) return InstallStage::Downloading;
+    if (waiting && !installing && !installed && !fetched) return InstallStage::Queued;
     // Between two packages nothing is on the wire: still one install.
     if (installing || installed)
         return installedCount == count ? InstallStage::Installed : InstallStage::Installing;
@@ -172,6 +177,7 @@ void InstallProgress::begin(const QString& name, const QString& targetVersion,
     e.targetVersion     = targetVersion;
     e.targetHash        = targetHash;
     e.stage             = InstallStage::Downloading;
+    e.waiting           = false;
     e.error.clear();
     e.startedByTopLevel = startedByTopLevel;
     if (!startedByTopLevel.isEmpty()) e.topLevels.insert(startedByTopLevel);
@@ -222,6 +228,8 @@ void InstallProgress::beginPlan(const QString& topLevel, const QList<PlannedPack
             // Joining an install already running must not rewind it.
             Entry& e = m_ops[p.name];
             e.topLevels.insert(topLevel);
+            // An approved plan brings it now.
+            e.waiting = false;
             if (e.downloadTotal == 0 && p.size > 0) e.downloadTotal = p.size;
         }
         emit downloadProgressChanged(p.name);
@@ -236,7 +244,26 @@ void InstallProgress::setStage(const QString& name, InstallStage stage)
     const auto it = m_ops.find(name);
     if (it == m_ops.end() || it->stage == stage) return;
     it->stage = stage;
+    it->waiting = false;
     announceStage(*it);
+}
+
+void InstallProgress::beginWaiting(const QString& name, const QString& version,
+                                   const QString& repositoryUrl)
+{
+    if (name.isEmpty() || m_ops.contains(name)) return;
+    Entry& e = m_ops[name];
+    e.name              = name;
+    e.repositoryUrl     = repositoryUrl;
+    e.targetVersion     = version;
+    e.stage             = InstallStage::Queued;
+    e.startedByTopLevel = name;
+    e.waiting           = true;
+    e.topLevels.insert(name);
+    emit stageChanged(name);
+    emit activeNamesChanged();
+    emit downloadProgressChanged(name);
+    emit planStageChanged(name);
 }
 
 void InstallProgress::setDownloadProgress(const QString& name, quint64 received,
@@ -248,6 +275,7 @@ void InstallProgress::setDownloadProgress(const QString& name, quint64 received,
     // past its download ignores a late one.
     if (it->stage == InstallStage::Queued && !it->downloadComplete) {
         it->stage = InstallStage::Downloading;
+        it->waiting = false;
         announceStage(*it);
     }
     if (it->stage != InstallStage::Downloading) return;

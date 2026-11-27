@@ -129,7 +129,7 @@ void Installer::enqueue(JobPtr job)
     // Behind another request: its row says so until its turn.
     if (m_current && (job->kind == Job::Kind::Install || job->kind == Job::Kind::Upgrade)
         && !m_progress->has(job->name)) {
-        m_progress->beginPlan(job->name, {{job->name, job->version, {}, 0, job->repositoryUrl}});
+        m_progress->beginWaiting(job->name, job->version, job->repositoryUrl);
         job->shownQueued = true;
     }
     m_queue.append(std::move(job));
