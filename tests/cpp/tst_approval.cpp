@@ -149,6 +149,11 @@ TEST(a_download_must_be_signed_as_approved) {
     CHECK_EQ(signerChanged(verified(false, ""), plan, dep), QString());
     CHECK(!signerChanged(verified(true, "did:jwk:b"), plan, dep).isEmpty());
     CHECK(!signerChanged({}, plan, dep).isEmpty());
+    // A check that didn't run is not someone else's signature.
+    const QString timedOut = signerChanged({{"error", "package_manager did not answer within 2 min."}}, plan, app);
+    CHECK(timedOut.contains("could not be checked"));
+    CHECK(timedOut.contains("did not answer within 2 min."));
+    CHECK(!timedOut.contains("not signed as you approved"));
 }
 
 // The copy that installs is the release approved: its manifest's name and
@@ -159,6 +164,9 @@ TEST(a_copy_must_be_the_release_approved) {
     CHECK_EQ(releaseChanged(same, row), QString());
     CHECK(releaseChanged(withKey(same, "rootHash", "b"), row).contains("app v2.0.0"));
     CHECK(!releaseChanged(withKey(same, "version", "2.0.1"), row).isEmpty());
+    const QString unread = releaseChanged({{"error", "package_manager did not answer within 2 min."}}, row);
+    CHECK(unread.contains("could not be checked"));
+    CHECK(!unread.contains("not the release you approved"));
     CHECK(!releaseChanged(withKey(same, "name", "capability_module"), row).isEmpty());
     CHECK(!releaseChanged(withKey(same, "error", "Failed to load LGX package"), row).isEmpty());
     CHECK(!releaseChanged(same, withKey(row, "rootHash", "")).isEmpty());

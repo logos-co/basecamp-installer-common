@@ -22,7 +22,8 @@ public:
     virtual void downloadPinned(const QString& repositoryUrl, const QString& name,
                                 const QString& version, const QString& rootHash,
                                 std::function<void(const QVariantMap&)> done) = 0;
-    // package_manager.verifyPackage(): {packageValid, isSigned, signatureValid, signerDid}.
+    // package_manager.verifyPackage(): {packageValid, isSigned, signatureValid, signerDid},
+    // or {error} when the call itself failed.
     virtual void verifyPackage(const QString& path, std::function<void(const QVariantMap&)> done) = 0;
     // package_manager.inspectPackage(): {name, version, rootHash, signatureStatus,
     // signerDid, isAlreadyInstalled, installedVersion}, or {error}.

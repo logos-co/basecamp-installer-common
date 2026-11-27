@@ -42,11 +42,12 @@ QString notAsApproved(const QVariantList& fetched, const QVariantList& requested
 // Why a fetched file, as package_manager's verifyPackage() read it, is not
 // signed as `plan` approved its release: not valid, or not by the approved
 // key (signed at all, for one approved unsigned). A check that didn't run
-// proves nothing.
+// proves nothing: a reply with an `error` says the check failed.
 QString signerChanged(const QVariantMap& verified, const QVariantList& plan, const QVariantMap& row);
 
 // Why the file inspectPackage() describes as `inspected` is not the release
-// `row` names (name, version, root hash), or empty.
+// `row` names (name, version, root hash), or that it could not be read
+// (`error`), or empty.
 QString releaseChanged(const QVariantMap& inspected, const QVariantMap& row);
 
 // Why a fetched file whose SHA-256 is `sha256` is not the file `plan`
