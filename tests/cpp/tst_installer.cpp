@@ -667,22 +667,25 @@ TEST(a_call_that_timed_out_holds_its_turn_and_files_until_the_disk_says) {
     r.modules.serve("next", "1.0.0", "n");
     r.modules.installCallError = "package_manager did not reply within 300 s";
     r.modules.readFailsAfterInstall = 100;
+    // The next is approved for its turn, then cancelled at it.
     r.basecamp.decide = [](const QString&, const QVariantMap& params) {
-        return params.value("name") == "app" ? approve(planOf({release("app", "2.0.0", "a")}))
-                                             : refuse("cancelled");
+        if (params.value("name") == "app") return approve(planOf({release("app", "2.0.0", "a")}));
+        return params.contains("ticket") ? refuse("cancelled") : approve({{"ticket", "t1"}});
     };
     r.installer.install("app", "2.0.0", kRepo);
     r.installer.install("next", "1.0.0", kRepo);
     CHECK(r.finished.isEmpty());
     CHECK(r.installer.isBusy());
-    CHECK_EQ(r.basecamp.asked.size(), 1);
+    CHECK_EQ(r.basecamp.asked.size(), 2);
     CHECK(QFile::exists(r.modules.installedPaths.value(0)));
     SPIN(150);
     CHECK_EQ(std::get<0>(r.finished.value(0)), QStringLiteral("app"));
     CHECK(std::get<1>(r.finished.value(0)) == Installer::Outcome::Failed);
     // Never confirmed: the install may still be reading its copy.
     CHECK(QFile::exists(r.modules.installedPaths.value(0)));
-    CHECK_EQ(r.basecamp.asked.size(), 2);
+    // The next's turn came only then.
+    CHECK_EQ(r.basecamp.asked.size(), 3);
+    CHECK_EQ(r.basecamp.asked.value(2).params.value("ticket").toString(), QStringLiteral("t1"));
 }
 
 TEST(a_call_that_timed_out_but_landed_is_done) {
@@ -741,49 +744,123 @@ TEST(an_install_that_never_reads_back_fails) {
 
 // ── One at a time ────────────────────────────────────────────────────────
 
-// The next is asked about only once the last has finished.
-TEST(one_request_at_a_time_in_the_order_asked) {
+// Installed one at a time, in the order asked; one asked for while another
+// runs is put to Basecamp at once, saying it can wait.
+TEST(each_installs_in_turn_and_the_next_is_asked_about_at_once) {
     Run r;
     r.basecamp.hold = true;
     r.modules.serve("a", "1.0.0", "ha");
     r.modules.serve("b", "1.0.0", "hb");
     r.installer.install("a", "1.0.0", kRepo);
     r.installer.install("b", "1.0.0", kRepo);
-    CHECK_EQ(r.basecamp.asked.size(), 1);
+    CHECK_EQ(r.basecamp.asked.size(), 2);
+    CHECK(r.basecamp.asked.value(1).params.value("waits").toBool());
     CHECK(r.installer.isBusy());
     CHECK_EQ(r.installer.waiting(), QStringList{"b"});
+    // Approved at once (a Basecamp with nothing to wait for): its turn first.
     r.basecamp.answerNext(approve(planOf({release("a", "1.0.0", "ha")})));
+    r.basecamp.answerNext(approve(planOf({release("b", "1.0.0", "hb")})));
     CHECK_EQ(r.installs(), QStringList{"install a"});
-    CHECK_EQ(r.basecamp.asked.size(), 1);
     SPIN(5);
+    CHECK_EQ(r.installs(), (QStringList{"install a", "install b"}));
     CHECK_EQ(r.basecamp.asked.size(), 2);
-    CHECK_EQ(r.basecamp.asked.value(1).params.value("name").toString(), QStringLiteral("b"));
-    r.basecamp.answerNext(refuse("cancelled"));
-    SPIN(5);
     CHECK(!r.installer.isBusy());
 }
 
-// Waiting behind another request: its row says Queued, until its turn,
-// when Basecamp is asked about it.
-TEST(a_request_waiting_its_turn_shows_as_queued) {
+// Approved for its turn: it waits, then hands its ticket back, and installs
+// what that answer approves. Its row says Queued until then.
+TEST(a_request_approved_for_its_turn_installs_what_its_ticket_then_buys) {
+    Run r;
+    r.basecamp.hold = true;
+    r.modules.serve("a", "1.0.0", "ha");
+    r.modules.serve("b", "1.0.0", "hb");
+    r.installer.install("a", "1.0.0", kRepo);
+    r.installer.install("b", "1.0.0", kRepo);
+    r.basecamp.answerNext(approve(planOf({release("a", "1.0.0", "ha")})));
+    r.basecamp.answerNext(approve({{"ticket", "t1"}}));
+    CHECK_EQ(r.progress.planStage("b"), InstallStage::Queued);
+    CHECK_EQ(r.basecamp.asked.size(), 2);
+    SPIN(5);
+    CHECK_EQ(r.basecamp.asked.size(), 3);
+    // Queued still, until Basecamp says to go ahead.
+    CHECK_EQ(r.progress.planStage("b"), InstallStage::Queued);
+    CHECK_EQ(r.basecamp.asked.value(2).params.value("ticket").toString(), QStringLiteral("t1"));
+    CHECK_EQ(r.basecamp.asked.value(2).params.value("name").toString(), QStringLiteral("b"));
+    CHECK_EQ(r.installs(), QStringList{"install a"});
+    r.basecamp.answerNext(approve(planOf({release("b", "1.0.0", "hb")})));
+    SPIN(5);
+    CHECK_EQ(r.installs(), (QStringList{"install a", "install b"}));
+}
+
+// Declined before its turn: out of the queue at once; the one running goes on.
+TEST(a_request_declined_before_its_turn_leaves_the_queue) {
     Run r;
     r.basecamp.hold = true;
     r.modules.serve("a", "1.0.0", "ha");
     r.installer.install("a", "1.0.0", kRepo);
-    CHECK(!r.progress.has("a"));
     r.installer.install("b", "1.0.0", kRepo);
     CHECK_EQ(r.progress.stage("b"), InstallStage::Queued);
     // Its plan too, which its tile shows: it read Downloading.
     CHECK_EQ(r.progress.planStage("b"), InstallStage::Queued);
     CHECK(r.progress.belongsTo("b", kRepo));
     CHECK(!r.progress.belongsTo("b", "https://other.example/logos-repo.json"));
+    r.basecamp.waiting.takeLast()(refuse("cancelled"));
+    CHECK(r.installer.waiting().isEmpty());
+    CHECK(!r.progress.has("b"));
+    CHECK_EQ(std::get<0>(r.finished.last()), QStringLiteral("b"));
+    CHECK_EQ(r.outcome(), Installer::Outcome::Cancelled);
+    CHECK(r.installer.isBusy());
+    r.basecamp.answerNext(approve(planOf({release("a", "1.0.0", "ha")})));
+    SPIN(5);
+    CHECK_EQ(r.installs(), QStringList{"install a"});
+    CHECK_EQ(r.basecamp.asked.size(), 2);
+}
+
+// At its turn Basecamp asks again, as what it planned on changed, and the
+// person cancels: nothing installs.
+TEST(a_ticket_basecamp_then_declines_installs_nothing) {
+    Run r;
+    r.basecamp.hold = true;
+    r.modules.serve("a", "1.0.0", "ha");
+    r.installer.install("a", "1.0.0", kRepo);
+    r.installer.install("b", "1.0.0", kRepo);
+    r.basecamp.answerNext(approve(planOf({release("a", "1.0.0", "ha")})));
+    r.basecamp.answerNext(approve({{"ticket", "t1"}}));
+    SPIN(5);
+    r.basecamp.answerNext(refuse("cancelled"));
+    SPIN(5);
+    CHECK_EQ(r.installs(), QStringList{"install a"});
+    CHECK_EQ(r.outcome(), Installer::Outcome::Cancelled);
+    CHECK(!r.progress.has("b"));
+    CHECK(!r.installer.isBusy());
+}
+
+// A go-ahead answered with another ticket is no go-ahead.
+TEST(a_ticket_answered_with_another_ticket_installs_nothing) {
+    Run r;
+    r.basecamp.hold = true;
+    r.installer.install("b", "1.0.0", kRepo);
+    r.basecamp.answerNext(approve({{"ticket", "t1"}}));
+    r.basecamp.answerNext(approve({{"ticket", "t2"}}));
+    SPIN(5);
+    CHECK(r.installs().isEmpty());
+    CHECK_EQ(r.outcome(), Installer::Outcome::Failed);
+}
+
+// Only a catalog release can wait for its turn; an uninstall is asked about
+// at its turn.
+TEST(only_a_catalog_request_says_it_can_wait) {
+    Run r;
+    r.basecamp.hold = true;
+    r.modules.serve("a", "1.0.0", "ha");
+    r.installer.install("a", "1.0.0", kRepo);
+    CHECK(r.basecamp.asked.value(0).params.value("waits").toBool());
+    r.installer.uninstall({"old"});
+    CHECK_EQ(r.basecamp.asked.size(), 1);
     r.basecamp.answerNext(refuse("cancelled"));
     SPIN(5);
     CHECK_EQ(r.basecamp.asked.size(), 2);
-    CHECK(!r.progress.has("b"));
-    r.basecamp.answerNext(refuse("cancelled"));
-    SPIN(5);
-    CHECK(!r.progress.has("b"));
+    CHECK(!r.basecamp.asked.value(1).params.contains("waits"));
 }
 
 TEST(asking_twice_asks_once) {

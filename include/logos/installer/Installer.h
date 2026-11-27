@@ -39,9 +39,14 @@ class PackageModel;
 // A local .lgx: staged as a private copy, shown to Basecamp, and installed
 // only while it is the file Basecamp approved.
 //
-// One request at a time, in the order asked: the next is asked about only
-// once the last has finished. Progress goes to an InstallProgress; the
-// backend forwards package_downloader's downloadProgress to it.
+// One request at a time, in the order asked. A catalog install or upgrade
+// asked for while another runs is put to Basecamp at once, saying it can
+// wait (`waits`): Basecamp shows it now, and may approve it for its turn with
+// a ticket, which the request hands back when its turn comes (`ticket`) for
+// the plan to install; Basecamp asks again if what it planned on changed. A
+// local file and an uninstall are asked about at their turn. Progress goes to
+// an InstallProgress; the backend forwards package_downloader's
+// downloadProgress to it.
 class Installer : public QObject {
     Q_OBJECT
 
@@ -102,7 +107,14 @@ private:
 
     void enqueue(JobPtr job);
     void startNext();
+    QVariantMap catalogParams(const JobPtr& job) const;
     void askCatalog(const JobPtr& job);
+    // Its turn, with Basecamp's answer to askCatalog().
+    void goOn(const JobPtr& job);
+    void askGoAhead(const JobPtr& job, const QString& ticket);
+    void runCatalog(const JobPtr& job, const QVariantMap& approved);
+    // Not approved before its turn: out of the queue.
+    void drop(const JobPtr& job, const QString& error);
     void stageFile(const JobPtr& job);
     void askFile(const JobPtr& job, const QVariantMap& inspected);
     void askUninstall(const JobPtr& job);

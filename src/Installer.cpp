@@ -37,6 +37,9 @@ struct Installer::Job {
     QHash<QString, QString> uninstallErrors;
     int run = 0;                // which request for `name` this is
     bool shownQueued = false;   // its row says Queued while it waits
+    bool asked = false;         // Install, Upgrade: put to Basecamp
+    bool answered = false;      // and its answer is in
+    Consent::Answer answer;
     bool keepFiles = false;     // an install that never confirmed may still read them
 };
 
@@ -126,13 +129,16 @@ void Installer::enqueue(JobPtr job)
             && other->path == job->path && other->names == job->names;
     };
     if (same(m_current) || std::any_of(m_queue.cbegin(), m_queue.cend(), same)) return;
-    // Behind another request: its row says so until its turn.
-    if (m_current && (job->kind == Job::Kind::Install || job->kind == Job::Kind::Upgrade)
-        && !m_progress->has(job->name)) {
+    const bool catalog = job->kind == Job::Kind::Install || job->kind == Job::Kind::Upgrade;
+    // Behind another request: its row says so until its turn, and Basecamp
+    // is asked about it now.
+    const bool behind = bool(m_current);
+    if (behind && catalog && !m_progress->has(job->name)) {
         m_progress->beginWaiting(job->name, job->version, job->repositoryUrl);
         job->shownQueued = true;
     }
-    m_queue.append(std::move(job));
+    m_queue.append(job);
+    if (behind && catalog) askCatalog(job);
     startNext();
 }
 
@@ -142,11 +148,13 @@ void Installer::startNext()
     m_current = m_queue.takeFirst();
     emit busyChanged();
     const JobPtr job = m_current;
-    if (job->shownQueued && m_progress->stage(job->name) == InstallStage::Queued)
-        m_progress->clear(job->name);
     switch (job->kind) {
     case Job::Kind::Install:
-    case Job::Kind::Upgrade:   askCatalog(job);   break;
+    case Job::Kind::Upgrade:
+        // Asked about already: on with its answer, or once it comes.
+        if (!job->asked) askCatalog(job);
+        else if (job->answered) goOn(job);
+        break;
     case Job::Kind::File:      stageFile(job);    break;
     case Job::Kind::Uninstall: askUninstall(job); break;
     }
@@ -154,7 +162,7 @@ void Installer::startNext()
 
 // ── A catalog release ───────────────────────────────────────────────────
 
-void Installer::askCatalog(const JobPtr& job)
+QVariantMap Installer::catalogParams(const JobPtr& job) const
 {
     QVariantMap params{{QStringLiteral("name"), job->name},
                        {QStringLiteral("version"), job->version},
@@ -165,9 +173,50 @@ void Installer::askCatalog(const JobPtr& job)
         const QVariantMap chosen = job->choices.value(key).toMap();
         if (!chosen.isEmpty()) params.insert(key, chosen);
     }
+    return params;
+}
+
+void Installer::askCatalog(const JobPtr& job)
+{
+    QVariantMap params = catalogParams(job);
+    // It can hold an approval until its turn: Basecamp asks about it now.
+    params.insert(QStringLiteral("waits"), true);
     const QString intent = QLatin1String(job->kind == Job::Kind::Upgrade ? Consent::kConfirmUpgrade
                                                                          : Consent::kConfirmInstall);
+    job->asked = true;
     job->run = ++m_runs[job->name];
+    emit asking(job->name);
+    QPointer<Installer> self(this);
+    m_consent->ask(intent, params, [self, job](const Consent::Answer& answer) {
+        if (!self) return;
+        job->answered = true;
+        job->answer = answer;
+        if (self->m_current == job) self->goOn(job);
+        else if (!answer.approved) self->drop(job, answer.error);
+    });
+}
+
+void Installer::goOn(const JobPtr& job)
+{
+    if (!job->answer.approved) {
+        endUnapproved(job, job->answer.error);
+        return;
+    }
+    // Approved for its turn: the ticket buys the plan now.
+    const QString ticket = str(job->answer.data, "ticket");
+    if (!ticket.isEmpty()) {
+        askGoAhead(job, ticket);
+        return;
+    }
+    runCatalog(job, job->answer.data);
+}
+
+void Installer::askGoAhead(const JobPtr& job, const QString& ticket)
+{
+    QVariantMap params = catalogParams(job);
+    params.insert(QStringLiteral("ticket"), ticket);
+    const QString intent = QLatin1String(job->kind == Job::Kind::Upgrade ? Consent::kConfirmUpgrade
+                                                                         : Consent::kConfirmInstall);
     emit asking(job->name);
     QPointer<Installer> self(this);
     m_consent->ask(intent, params, [self, job](const Consent::Answer& answer) {
@@ -176,38 +225,52 @@ void Installer::askCatalog(const JobPtr& job)
             self->endUnapproved(job, answer.error);
             return;
         }
-        if (answer.data.contains(QStringLiteral("file"))) {
-            self->failBefore(job, QStringLiteral("Basecamp approved a file, not this release, so "
-                                                 "nothing was installed."));
+        if (answer.data.contains(QStringLiteral("ticket"))) {
+            self->failBefore(job, QStringLiteral("Basecamp did not say to go ahead, so nothing was "
+                                                 "installed."));
             return;
         }
-        const QString refused = refusal(answer.data, false, job->name);
-        if (!refused.isEmpty()) {
-            self->failBefore(job, refused);
+        self->runCatalog(job, answer.data);
+    });
+}
+
+void Installer::runCatalog(const JobPtr& job, const QVariantMap& approved)
+{
+    if (approved.contains(QStringLiteral("file"))) {
+        failBefore(job, QStringLiteral("Basecamp approved a file, not this release, so "
+                                       "nothing was installed."));
+        return;
+    }
+    const QString refused = refusal(approved, false, job->name);
+    if (!refused.isEmpty()) {
+        failBefore(job, refused);
+        return;
+    }
+    job->plan = approved.value(QStringLiteral("plan")).toList();
+    // Its turn come: Queued no longer, on its way once its plan begins.
+    if (job->shownQueued && m_progress->stage(job->name) == InstallStage::Queued)
+        m_progress->clear(job->name);
+    QPointer<Installer> self(this);
+    m_modules->readInstalledPackages([self, job](const QVariantList& installed, bool read) {
+        if (!self) return;
+        // Not knowing what is on disk is not knowing what to fetch.
+        if (!read) {
+            self->failBefore(job, QStringLiteral("The installed packages could not be read, so "
+                                                 "nothing was installed. Try again."));
             return;
         }
-        job->plan = answer.data.value(QStringLiteral("plan")).toList();
-        self->m_modules->readInstalledPackages([self, job](const QVariantList& installed, bool read) {
-            if (!self) return;
-            // Not knowing what is on disk is not knowing what to fetch.
-            if (!read) {
-                self->failBefore(job, QStringLiteral("The installed packages could not be read, so "
-                                                     "nothing was installed. Try again."));
-                return;
-            }
-            // An install of what is on disk already fetches only what changed
-            // under it (a dependency); an upgrade fetches its package again.
-            job->requested = stillToInstall(job->plan, installed,
-                                            job->kind == Job::Kind::Upgrade ? job->name : QString());
-            QList<InstallProgress::PlannedPackage> planned;
-            for (const QVariant& v : job->requested) {
-                const QVariantMap row = v.toMap();
-                planned.append({str(row, "name"), str(row, "version"), str(row, "rootHash"),
-                                self->sizeOf(row), str(row, "repositoryUrl")});
-            }
-            self->m_progress->beginPlan(job->name, planned);
-            self->download(job, 0);
-        });
+        // An install of what is on disk already fetches only what changed
+        // under it (a dependency); an upgrade fetches its package again.
+        job->requested = stillToInstall(job->plan, installed,
+                                        job->kind == Job::Kind::Upgrade ? job->name : QString());
+        QList<InstallProgress::PlannedPackage> planned;
+        for (const QVariant& v : job->requested) {
+            const QVariantMap row = v.toMap();
+            planned.append({str(row, "name"), str(row, "version"), str(row, "rootHash"),
+                            self->sizeOf(row), str(row, "repositoryUrl")});
+        }
+        self->m_progress->beginPlan(job->name, planned);
+        self->download(job, 0);
     });
 }
 
@@ -588,8 +651,16 @@ void Installer::failDuring(const JobPtr& job, const QVariantMap& row, const QStr
     end(job, Outcome::Failed, message);
 }
 
+void Installer::drop(const JobPtr& job, const QString& error)
+{
+    m_queue.removeAll(job);
+    endUnapproved(job, error);
+}
+
 void Installer::endUnapproved(const JobPtr& job, const QString& error)
 {
+    if (job->shownQueued && m_progress->stage(job->name) == InstallStage::Queued)
+        m_progress->clear(job->name);
     if (error == QLatin1String("cancelled")) {
         end(job, Outcome::Cancelled, {});
         return;
