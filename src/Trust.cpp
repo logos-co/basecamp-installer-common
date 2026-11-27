@@ -451,6 +451,8 @@ QVariantMap summary(const QList<Package>& packages, const QVariantList& trustedK
             verdict[QStringLiteral("reserved")] = true;
         if (p.backendTaken)
             verdict[QStringLiteral("backendTaken")] = true;
+        if (p.checkFailed)
+            verdict[QStringLiteral("checkFailed")] = true;
         if (!replaces.isEmpty())
             verdict[QStringLiteral("replaces")] = replaces;
         if (p.replacesUnverified)
@@ -481,6 +483,8 @@ QVariantMap summary(const QList<Package>& packages, const QVariantList& trustedK
             row[QStringLiteral("reserved")] = true;
         if (p.backendTaken)
             row[QStringLiteral("backendTaken")] = true;
+        if (p.checkFailed)
+            row[QStringLiteral("checkFailed")] = true;
         if (!replaces.isEmpty())
             row[QStringLiteral("replaces")] = replaces;
         if (p.replacesUnverified)

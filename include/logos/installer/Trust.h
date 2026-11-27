@@ -53,6 +53,7 @@ struct Package {
     bool builtIn = false;      // one of Basecamp's own apps, whoever signed it: Invalid
     bool reserved = false;     // ships with Basecamp, and not signed by Logos: Invalid
     bool backendTaken = false; // an app whose `<name>_backend` another installed package has: Invalid
+    bool checkFailed = false;  // its signature check didn't answer: Invalid, nothing to go on
     QString replacesSignedBy{};  // the key that signed the copy it replaces, when another signs it
     bool replacesUnverified = false;  // replaces a copy no checkable key signed, and isn't Logos's
 };
