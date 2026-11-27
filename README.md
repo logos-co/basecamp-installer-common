@@ -102,6 +102,9 @@ installer.upgrade(name, version, mode, repositoryUrl);
 installer.installFile(path);
 installer.uninstall({name});
 // finished(name, Done | Cancelled | Failed, error)
+// changeEnded(change): the change Basecamp approved with `change` in its
+// answer is over. Forward it to Basecamp: it ends its change on this, not on
+// finished(), which a request cancelled while waiting its turn emits too.
 ```
 
 An approved catalog release is downloaded pinned, release by release; held to

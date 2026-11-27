@@ -99,6 +99,10 @@ signals:
     void asking(const QString& name);
     void finished(const QString& name, logos::installer::Installer::Outcome outcome,
                   const QString& error);
+    // The change Basecamp approved with `change` in its answer is over, after
+    // finished(). A request that ended unapproved, or approved only for its
+    // turn, made no change and says nothing here.
+    void changeEnded(const QString& change);
     void busyChanged();
 
 private:
