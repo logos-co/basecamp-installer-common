@@ -36,7 +36,7 @@ What Logos' two installer apps, App Manager and Package Manager, share with each
 | `Types.js` | the values of `Types.h` |
 | `Downloads.js` | bytes and progress text, transport caption and icon name, finding peers, the download notice |
 | `Stages.js` | stage, progress and action words; version transitions |
-| `Availability.js` | why a package isn't available, in words |
+| `Availability.js` | why a package isn't available, in words, and the notice a dev build shows |
 | `Trust.js` | a `summary()` verdict in words, and its mark: check or warning, and its tone |
 
 Components and screens stay in each app.
