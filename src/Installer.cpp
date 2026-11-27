@@ -29,6 +29,7 @@ struct Installer::Job {
     QVariantMap choices;        // Install, Upgrade: {versions, optional}
     QStringList names;          // Uninstall
     QString path;               // File: the staged copy
+    QString label;              // File: the name it was picked by
     QVariantList plan;          // what Basecamp approved
     QVariantMap file;           // the approved file: {rootHash, signer, sha256}
     QVariantList requested;     // the plan, without what is on disk already
@@ -70,7 +71,7 @@ QStringList Installer::waiting() const
     QStringList out;
     for (const JobPtr& job : m_queue) {
         if (job->kind == Job::Kind::Uninstall) out << job->names;
-        else out << (job->name.isEmpty() ? QFileInfo(job->path).fileName() : job->name);
+        else out << (job->name.isEmpty() ? job->label : job->name);
     }
     return out;
 }
@@ -105,6 +106,7 @@ void Installer::installFile(const QString& path)
     auto job = std::make_shared<Job>();
     job->kind = Job::Kind::File;
     job->path = path;
+    job->label = QFileInfo(path).fileName();
     enqueue(job);
 }
 
@@ -205,6 +207,11 @@ void Installer::goOn(const JobPtr& job)
     // Approved for its turn: the ticket buys the plan now.
     const QString ticket = str(job->answer.data, "ticket");
     if (!ticket.isEmpty()) {
+        // Its go-ahead may wait on another app's change: Queued till then.
+        if (!job->shownQueued && !m_progress->isInFlight(job->name)) {
+            m_progress->beginWaiting(job->name, job->version, job->repositoryUrl);
+            job->shownQueued = true;
+        }
         askGoAhead(job, ticket);
         return;
     }
@@ -690,7 +697,7 @@ void Installer::end(const JobPtr& job, Outcome outcome, const QString& error)
     } else if (job->kind == Job::Kind::Uninstall) {
         for (const QString& name : job->names) emit finished(name, outcome, error);
     } else {
-        emit finished(job->name.isEmpty() ? QFileInfo(job->path).fileName() : job->name, outcome, error);
+        emit finished(job->name.isEmpty() ? job->label : job->name, outcome, error);
     }
     emit busyChanged();
     QPointer<Installer> self(this);
