@@ -43,6 +43,9 @@ TestCase {
                 "Comes with Basecamp and updates only with it")
         compare(Trust.description({ status: "invalid", reserved: true }),
                 "Comes with Basecamp, so only Logos can update it")
+        // A check that didn't answer is not a damaged file.
+        compare(Trust.description({ status: "invalid", checkFailed: true }),
+                "Couldn't check who signed it. Try again")
         compare(Trust.description({ status: "trusted", publisher: "Acme", replaces: "Logos" }),
                 "Not signed by Logos, who signed the version you have")
         compare(Trust.tone({ status: "trusted", replaces: "Logos" }), "danger")
