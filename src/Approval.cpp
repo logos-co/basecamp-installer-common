@@ -38,6 +38,15 @@ QString installedName(const QVariantMap& record)
     return module.isEmpty() ? str(record, "name") : module;
 }
 
+// A check that didn't run refuses as well, but says that is why.
+QString checkFailed(const QVariantMap& reply, const QVariantMap& row)
+{
+    const QString error = str(reply, "error");
+    if (error.isEmpty()) return {};
+    return QStringLiteral("%1 v%2 could not be checked, so nothing was installed: %3 Try again.")
+        .arg(str(row, "name"), str(row, "version"), error);
+}
+
 }  // namespace
 
 ApprovalSource sourceOf(const QVariantMap& approval, bool fileWaiting)
@@ -135,6 +144,7 @@ QString notAsApproved(const QVariantList& fetched, const QVariantList& requested
 
 QString signerChanged(const QVariantMap& verified, const QVariantList& plan, const QVariantMap& row)
 {
+    if (const QString failed = checkFailed(verified, row); !failed.isEmpty()) return failed;
     QString signer;
     for (const QVariant& v : plan) {
         if (releaseOf(v.toMap()) == releaseOf(row)) signer = str(v.toMap(), "signer");
@@ -153,6 +163,7 @@ QString signerChanged(const QVariantMap& verified, const QVariantList& plan, con
 
 QString releaseChanged(const QVariantMap& inspected, const QVariantMap& row)
 {
+    if (const QString failed = checkFailed(inspected, row); !failed.isEmpty()) return failed;
     const bool same = !inspected.contains(QStringLiteral("error"))
         && !str(row, "rootHash").isEmpty()
         && str(inspected, "name") == str(row, "name")

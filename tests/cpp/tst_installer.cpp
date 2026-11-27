@@ -56,6 +56,7 @@ struct FakeModules : InstallModules {
     // What the downloader serves, keyed "name@version".
     QHash<QString, QString> served;          // -> "name|version|rootHash|signer"
     QHash<QString, QString> downloadErrors;  // name -> error
+    QHash<QString, QString> verifyErrors;    // name -> error
     // Downloads answered only once released, to watch one under way.
     bool holdDownloads = false;
     QList<std::function<void()>> heldDownloads;
@@ -137,6 +138,10 @@ struct FakeModules : InstallModules {
     {
         const QStringList p = read(path);
         calls << "verify " + p.value(0);
+        if (verifyErrors.contains(p.value(0))) {
+            done({{"error", verifyErrors.value(p.value(0))}});
+            return;
+        }
         done({{"packageValid", p.size() == 4}, {"isSigned", !p.value(3).isEmpty()},
               {"signatureValid", !p.value(3).isEmpty()}, {"signerDid", p.value(3)}});
     }
@@ -420,6 +425,20 @@ TEST(a_copy_signed_by_someone_else_installs_nothing) {
     r.installer.install("app", "2.0.0", kRepo);
     CHECK(r.installs().isEmpty());
     CHECK(r.error().contains("not signed as you approved it"));
+}
+
+// A verify that never answered installs nothing, and says it couldn't check.
+TEST(a_check_that_did_not_run_installs_nothing_and_says_so) {
+    Run r;
+    r.modules.serve("app", "2.0.0", "a", "did:jwk:pub");
+    r.modules.verifyErrors.insert("app", "package_manager did not answer within 2 min.");
+    r.basecamp.decide = [](const QString&, const QVariantMap&) {
+        return approve(planOf({release("app", "2.0.0", "a", "did:jwk:pub")}));
+    };
+    r.installer.install("app", "2.0.0", kRepo);
+    CHECK(r.installs().isEmpty());
+    CHECK(r.error().contains("could not be checked"));
+    CHECK(r.error().contains("did not answer within 2 min."));
 }
 
 // The reply named the approved build; the file holds another.
