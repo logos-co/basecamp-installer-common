@@ -133,7 +133,7 @@ void Installer::enqueue(JobPtr job)
     // Behind another request: its row says so until its turn, and Basecamp
     // is asked about it now.
     const bool behind = bool(m_current);
-    if (behind && catalog && !m_progress->has(job->name)) {
+    if (behind && catalog && !m_progress->isInFlight(job->name)) {
         m_progress->beginWaiting(job->name, job->version, job->repositoryUrl);
         job->shownQueued = true;
     }

@@ -209,9 +209,13 @@ void InstallProgress::beginOrTrack(const QString& name, const QString& targetVer
 void InstallProgress::beginPlan(const QString& topLevel, const QList<PlannedPackage>& plan)
 {
     if (topLevel.isEmpty()) return;
+    // A new attempt: what one before it left (it failed, or installed) is no
+    // part of it, the request's own row included.
+    if (has(topLevel) && !isInFlight(topLevel)) clear(topLevel);
     bool added = false;
     for (const PlannedPackage& p : plan) {
         if (p.name.isEmpty()) continue;
+        if (has(p.name) && !isInFlight(p.name)) clear(p.name);
         if (!m_ops.contains(p.name)) {
             added = true;
             Entry& e = m_ops[p.name];
@@ -251,7 +255,9 @@ void InstallProgress::setStage(const QString& name, InstallStage stage)
 void InstallProgress::beginWaiting(const QString& name, const QString& version,
                                    const QString& repositoryUrl)
 {
-    if (name.isEmpty() || m_ops.contains(name)) return;
+    if (name.isEmpty() || isInFlight(name)) return;
+    // A retry: what the attempt before it left goes.
+    if (has(name)) clear(name);
     Entry& e = m_ops[name];
     e.name              = name;
     e.repositoryUrl     = repositoryUrl;

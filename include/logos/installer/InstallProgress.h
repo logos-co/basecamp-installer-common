@@ -85,11 +85,14 @@ public:
                       const QString& targetHash, const QString& startedByTopLevel,
                       const QString& repositoryUrl = {});
     // Every package the install of `topLevel` brings, each Queued until its
-    // first bytes; its size seeds the plan's total.
+    // first bytes; its size seeds the plan's total. One in flight already is
+    // joined; what an earlier attempt left of it, or of `topLevel`'s own row
+    // (failed, or installed), starts afresh.
     void beginPlan(const QString& topLevel, const QList<PlannedPackage>& plan);
     // A request for `name` waiting its turn behind another, before Basecamp
     // is asked about it: Queued, and so is its plan, until clear() or its
-    // approved plan (beginPlan()). Nothing if `name` is in flight already.
+    // approved plan (beginPlan()). Nothing if `name` is in flight already;
+    // what an earlier attempt left goes.
     void beginWaiting(const QString& name, const QString& version, const QString& repositoryUrl);
     void setStage(const QString& name, InstallStage stage);
     // Only while Queued or Downloading. A total of 0 keeps the known one; an

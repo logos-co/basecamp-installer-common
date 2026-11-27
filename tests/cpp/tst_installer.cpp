@@ -22,6 +22,7 @@
 #include <QTemporaryDir>
 
 #include <tuple>
+#include <utility>
 
 using namespace logos::installer;
 
@@ -55,6 +56,9 @@ struct FakeModules : InstallModules {
     // What the downloader serves, keyed "name@version".
     QHash<QString, QString> served;          // -> "name|version|rootHash|signer"
     QHash<QString, QString> downloadErrors;  // name -> error
+    // Downloads answered only once released, to watch one under way.
+    bool holdDownloads = false;
+    QList<std::function<void()>> heldDownloads;
     QHash<QString, QVariantMap> installed;   // name -> record
     QStringList installFails, uninstallFails;
     QString installCallError;
@@ -98,6 +102,22 @@ struct FakeModules : InstallModules {
                         const QString& rootHash, std::function<void(const QVariantMap&)> done) override
     {
         calls << "download " + name;
+        if (holdDownloads) {
+            heldDownloads.append([this, repositoryUrl, name, version, rootHash, done] {
+                answerDownload(repositoryUrl, name, version, rootHash, done);
+            });
+            return;
+        }
+        answerDownload(repositoryUrl, name, version, rootHash, done);
+    }
+    void releaseDownloads()
+    {
+        holdDownloads = false;
+        for (const auto& download : std::exchange(heldDownloads, {})) download();
+    }
+    void answerDownload(const QString& repositoryUrl, const QString& name, const QString& version,
+                        const QString& rootHash, const std::function<void(const QVariantMap&)>& done)
+    {
         if (downloadErrors.contains(name)) {
             done({{"name", name}, {"error", downloadErrors.value(name)}});
             return;
@@ -584,6 +604,77 @@ TEST(a_failed_dependency_fails_the_app_and_says_which) {
     CHECK_EQ(r.error(), QStringLiteral("dep: no variant for this platform"));
     CHECK_EQ(r.progress.stage("app"), InstallStage::Failed);
     CHECK_EQ(r.progress.stage("dep"), InstallStage::Failed);
+}
+
+// Retried without a reload, the failed attempt's row is no part of the new
+// one: it was left Failed, with its error, and the retry's download samples
+// went unseen.
+TEST(a_retry_without_a_reload_shows_its_own_download) {
+    Run r;
+    r.modules.downloadErrors.insert("app", "timed out");
+    r.basecamp.decide = [](const QString&, const QVariantMap&) {
+        return approve(planOf({release("app", "2.0.0", "a")}));
+    };
+    r.installer.install("app", "2.0.0", kRepo);
+    CHECK(r.outcome() == Installer::Outcome::Failed);
+    CHECK_EQ(r.progress.stage("app"), InstallStage::Failed);
+    SPIN(10);
+
+    r.modules.downloadErrors.clear();
+    r.modules.serve("app", "2.0.0", "a");
+    r.modules.holdDownloads = true;
+    r.installer.install("app", "2.0.0", kRepo);
+    CHECK_EQ(r.progress.stage("app"), InstallStage::Queued);
+    CHECK_EQ(r.progress.error("app"), QString());
+    r.progress.setDownloadProgress("app", 10, 100);
+    CHECK_EQ(r.progress.stage("app"), InstallStage::Downloading);
+    CHECK_EQ(r.progress.downloadReceived("app"), quint64(10));
+    CHECK_EQ(r.progress.planStage("app"), InstallStage::Downloading);
+    r.modules.releaseDownloads();
+    CHECK(r.outcome() == Installer::Outcome::Done);
+}
+
+// The dependency whose install failed is fetched again with the retry, and
+// says so.
+TEST(a_retry_after_a_dependency_failed_shows_it_on_its_way) {
+    Run r;
+    r.modules.serve("dep", "1.0.0", "d");
+    r.modules.serve("app", "2.0.0", "a");
+    r.modules.installFails << "dep";
+    r.basecamp.decide = [](const QString&, const QVariantMap&) {
+        return approve(planOf({release("dep", "1.0.0", "d"), release("app", "2.0.0", "a")}));
+    };
+    r.installer.install("app", "2.0.0", kRepo);
+    CHECK_EQ(r.progress.stage("dep"), InstallStage::Failed);
+    SPIN(10);
+
+    r.modules.installFails.clear();
+    r.modules.holdDownloads = true;
+    r.installer.install("app", "2.0.0", kRepo);
+    CHECK_EQ(r.progress.stage("dep"), InstallStage::Queued);
+    CHECK_EQ(r.progress.error("dep"), QString());
+    CHECK_EQ(r.progress.planStage("app"), InstallStage::Downloading);
+    r.modules.releaseDownloads();
+    CHECK(r.outcome() == Installer::Outcome::Done);
+}
+
+// Waiting its turn, a retry says Queued, not the Failed it left.
+TEST(a_retry_behind_another_request_is_queued) {
+    Run r;
+    r.modules.downloadErrors.insert("app", "timed out");
+    r.basecamp.decide = [](const QString&, const QVariantMap&) {
+        return approve(planOf({release("app", "2.0.0", "a")}));
+    };
+    r.installer.install("app", "2.0.0", kRepo);
+    CHECK_EQ(r.progress.stage("app"), InstallStage::Failed);
+    SPIN(10);
+
+    r.basecamp.hold = true;
+    r.installer.install("other", "1.0.0", kRepo);
+    r.installer.install("app", "2.0.0", kRepo);
+    CHECK_EQ(r.progress.stage("app"), InstallStage::Queued);
+    CHECK_EQ(r.progress.planStage("app"), InstallStage::Queued);
+    CHECK_EQ(r.progress.error("app"), QString());
 }
 
 // The deadline cancels nothing: say the package may be there.
