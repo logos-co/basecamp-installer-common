@@ -286,10 +286,16 @@ void Installer::checkCopies(const JobPtr& job, const QVariantList& rows, int ind
     }
     const QVariantMap row = rows.at(index).toMap();
     const QString path = str(row, "path");
-    QPointer<Installer> self(this);
     // The download picks a release's catalog entry by root hash alone, which
     // covers neither its manifest nor its signature: the copy is checked for
-    // both before it installs.
+    // both before it installs, and is the file approved when the approval
+    // names its digest.
+    const QString differs = digestChanged(sha256Of(path), job->plan, row);
+    if (!differs.isEmpty()) {
+        failBefore(job, differs);
+        return;
+    }
+    QPointer<Installer> self(this);
     m_modules->verifyPackage(path, [self, job, rows, index, row, path](const QVariantMap& verified) {
         if (!self) return;
         const QString why = signerChanged(verified, job->plan, row);

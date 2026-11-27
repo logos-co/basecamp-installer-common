@@ -95,7 +95,9 @@ installer.uninstall({name});
 
 An approved catalog release is downloaded pinned, release by release; held to
 the approval; copied where only this backend writes; each copy checked to be
-the approved release and signed as approved; then installed, a copy the user
+the approved release and signed as approved, and the approved file when the
+approval names its SHA-256 (Basecamp does, for an unsigned release, as its root
+hash leaves its manifest out); then installed, a copy the user
 installed earlier removed only after its replacement passed those checks; and
 each install checked on disk: the approved version and root hash, in a copy
 other than Basecamp's own. An install whose call timed out, or that can't be

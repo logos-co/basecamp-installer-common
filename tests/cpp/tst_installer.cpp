@@ -13,6 +13,7 @@
 #include <logos/installer/Installer.h>
 #include <logos/installer/PackageModel.h>
 
+#include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
 #include <QHash>
@@ -35,6 +36,12 @@ QVariantMap release(const QString& name, const QString& version, const QString& 
     if (!signer.isEmpty()) r.insert("signer", signer);
     if (optional) r.insert("optional", true);
     return r;
+}
+
+QVariantMap withDigest(QVariantMap row, const QString& sha256)
+{
+    row.insert("sha256", sha256);
+    return row;
 }
 
 QVariantMap planOf(const QVariantList& rows)
@@ -415,6 +422,29 @@ TEST(a_copy_that_isnt_the_approved_release_installs_nothing) {
     installer.install("app", "2.0.0", kRepo);
     CHECK(modules.calls.filter("install ").isEmpty());
     CHECK(error.contains("not the release you approved"));
+}
+
+// Unsigned, only the catalog's digest of its file pins its manifest: the copy
+// is held to the one Basecamp approved.
+TEST(a_copy_that_isnt_the_approved_file_installs_nothing) {
+    Run r;
+    r.modules.serve("app", "2.0.0", "a");
+    const QString file = QString::fromLatin1(
+        QCryptographicHash::hash("app|2.0.0|a|", QCryptographicHash::Sha256).toHex());
+    r.basecamp.decide = [](const QString&, const QVariantMap&) {
+        return approve(planOf({withDigest(release("app", "2.0.0", "a"), "not-this-file")}));
+    };
+    r.installer.install("app", "2.0.0", kRepo);
+    CHECK(r.installs().isEmpty());
+    CHECK(r.error().contains("not the file you approved"));
+
+    Run same;
+    same.modules.serve("app", "2.0.0", "a");
+    same.basecamp.decide = [file](const QString&, const QVariantMap&) {
+        return approve(planOf({withDigest(release("app", "2.0.0", "a"), file)}));
+    };
+    same.installer.install("app", "2.0.0", kRepo);
+    CHECK(same.outcome() == Installer::Outcome::Done);
 }
 
 TEST(what_is_on_disk_already_is_not_fetched_again) {
