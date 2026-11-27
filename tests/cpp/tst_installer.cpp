@@ -1042,6 +1042,16 @@ TEST(a_local_file_whose_install_never_confirmed_keeps_its_copy) {
     CHECK(QFile::exists(r.modules.installedPaths.value(0)));
 }
 
+// A file that can't be read is reported by the name it was picked by, not
+// its private copy's: Basecamp's Install Failed notice named a UUID.
+TEST(a_local_file_that_cant_be_read_is_reported_by_its_own_name) {
+    Run r;
+    r.installer.installFile(r.modules.writeFile("broken-0.1.0.lgx", "not a package"));
+    CHECK(r.outcome() == Installer::Outcome::Failed);
+    CHECK_EQ(std::get<0>(r.finished.last()), QStringLiteral("broken-0.1.0.lgx"));
+    CHECK(r.basecamp.asked.isEmpty());
+}
+
 TEST(a_local_file_that_changed_after_approval_installs_nothing) {
     Run r;
     const QString picked = r.modules.writeFile("picked.lgx", "tool|1.0.0|t|");
