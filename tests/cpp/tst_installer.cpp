@@ -251,11 +251,14 @@ struct Run {
     InstallProgress progress;
     Installer installer{&modules, &basecamp, &progress};
     QList<std::tuple<QString, Installer::Outcome, QString>> finished;
+    QStringList changesEnded;
 
     Run()
     {
         installer.setClearDelay(10);
         installer.setConfirmRetries(3, 5);
+        QObject::connect(&installer, &Installer::changeEnded, &installer,
+                         [this](const QString& change) { changesEnded << change; });
         QObject::connect(&installer, &Installer::finished, &installer,
                          [this](const QString& name, Installer::Outcome o, const QString& e) {
                              finished.append({name, o, e});
@@ -905,6 +908,73 @@ TEST(a_request_declined_before_its_turn_leaves_the_queue) {
     SPIN(5);
     CHECK_EQ(r.installs(), QStringList{"install a"});
     CHECK_EQ(r.basecamp.asked.size(), 2);
+}
+
+// Basecamp's change is the running one's: one declined before its turn ends
+// no change, and the running one's ends once it has.
+TEST(only_an_approved_change_says_it_ended) {
+    Run r;
+    r.basecamp.hold = true;
+    r.modules.serve("a", "1.0.0", "ha");
+    r.modules.serve("b", "1.0.0", "hb");
+    r.installer.install("a", "1.0.0", kRepo);
+    r.installer.install("b", "1.0.0", kRepo);
+    r.installer.install("c", "1.0.0", kRepo);
+    QVariantMap plan = planOf({release("a", "1.0.0", "ha")});
+    plan.insert("change", "change-a");
+    r.modules.holdDownloads = true;
+    r.basecamp.answerNext(approve(plan));
+    r.basecamp.waiting.takeLast()(refuse("cancelled"));
+    r.basecamp.answerNext(approve({{"ticket", "t1"}}));
+    CHECK_EQ(std::get<0>(r.finished.last()), QStringLiteral("c"));
+    CHECK(r.changesEnded.isEmpty());
+    r.modules.releaseDownloads();
+    SPIN(5);
+    CHECK_EQ(r.changesEnded, QStringList{"change-a"});
+    // b's go-ahead: approved for its turn first, its change named now.
+    QVariantMap goAhead = planOf({release("b", "1.0.0", "hb")});
+    goAhead.insert("change", "change-b");
+    r.basecamp.answerNext(approve(goAhead));
+    SPIN(5);
+    CHECK_EQ(r.installs(), (QStringList{"install a", "install b"}));
+    CHECK_EQ(r.changesEnded, (QStringList{"change-a", "change-b"}));
+}
+
+// A change that fails still ends, once, whatever it is.
+TEST(a_change_that_fails_says_it_ended_once) {
+    {
+        Run r;
+        r.modules.downloadErrors.insert("a", "gone");
+        r.basecamp.decide = [](const QString&, const QVariantMap&) {
+            QVariantMap plan = planOf({release("a", "1.0.0", "ha")});
+            plan.insert("change", "c1");
+            return approve(plan);
+        };
+        r.installer.install("a", "1.0.0", kRepo);
+        CHECK(r.outcome() == Installer::Outcome::Failed);
+        CHECK_EQ(r.changesEnded, QStringList{"c1"});
+    }
+    {
+        Run r;
+        r.modules.addInstalled("app", "1.0.0", "ha");
+        r.modules.addInstalled("dep", "1.0.0", "hd");
+        r.basecamp.decide = [](const QString&, const QVariantMap&) {
+            return approve({{"names", QStringList{"app", "dep"}}, {"change", "c2"}});
+        };
+        r.installer.uninstall({"app"});
+        CHECK_EQ(r.finished.size(), 2);
+        CHECK_EQ(r.changesEnded, QStringList{"c2"});
+    }
+    {
+        Run r;
+        const QString picked = r.modules.writeFile("picked.lgx", "tool|1.0.0|t|did:jwk:me");
+        r.basecamp.decide = [](const QString&, const QVariantMap&) {
+            return approve({{"file", QVariantMap{{"rootHash", "t"}}}, {"change", "c3"}});
+        };
+        r.installer.installFile(picked);
+        CHECK(r.outcome() == Installer::Outcome::Failed);
+        CHECK_EQ(r.changesEnded, QStringList{"c3"});
+    }
 }
 
 // At its turn Basecamp asks again, as what it planned on changed, and the

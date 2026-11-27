@@ -16,7 +16,8 @@ public:
     struct Answer {
         bool approved = false;
         // Approved: what may be done ({plan, optionalPackages} or {file}; for
-        // an uninstall, {names}).
+        // an uninstall, {names}), and the change's id (`change`), which
+        // Installer::changeEnded() hands back.
         QVariantMap data;
         // Not approved: the intent's error code ("cancelled", "failed",
         // "unavailable", "timeout", …).

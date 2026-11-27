@@ -41,6 +41,7 @@ struct Installer::Job {
     bool asked = false;         // Install, Upgrade: put to Basecamp
     bool answered = false;      // and its answer is in
     Consent::Answer answer;
+    QString change;             // the change Basecamp approved, by its id
     bool keepFiles = false;     // an install that never confirmed may still read them
 };
 
@@ -243,6 +244,7 @@ void Installer::askGoAhead(const JobPtr& job, const QString& ticket)
 
 void Installer::runCatalog(const JobPtr& job, const QVariantMap& approved)
 {
+    job->change = str(approved, "change");
     if (approved.contains(QStringLiteral("file"))) {
         failBefore(job, QStringLiteral("Basecamp approved a file, not this release, so "
                                        "nothing was installed."));
@@ -547,6 +549,7 @@ void Installer::askFile(const JobPtr& job, const QVariantMap& inspected)
                 self->endUnapproved(job, answer.error);
                 return;
             }
+            job->change = str(answer.data, "change");
             if (!answer.data.contains(QStringLiteral("file"))) {
                 self->failBefore(job, QStringLiteral("Basecamp did not approve this file, so nothing "
                                                      "was installed."));
@@ -592,6 +595,7 @@ void Installer::askUninstall(const JobPtr& job)
                 self->endUnapproved(job, answer.error);
                 return;
             }
+            job->change = str(answer.data, "change");
             // What Basecamp approved: an app, and what only it needed.
             const QStringList approved = answer.data.value(QStringLiteral("names")).toStringList();
             if (approved.isEmpty() || approved.contains(QString())) {
@@ -699,6 +703,7 @@ void Installer::end(const JobPtr& job, Outcome outcome, const QString& error)
     } else {
         emit finished(job->name.isEmpty() ? job->label : job->name, outcome, error);
     }
+    if (!job->change.isEmpty()) emit changeEnded(job->change);
     emit busyChanged();
     QPointer<Installer> self(this);
     QTimer::singleShot(0, this, [self] {
