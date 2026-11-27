@@ -926,6 +926,36 @@ TEST(a_ticket_basecamp_then_declines_installs_nothing) {
     CHECK(!r.installer.isBusy());
 }
 
+// Approved for later while another app's change is made, a request its app
+// runs now waits for Basecamp's go-ahead: Queued till then. Its row said
+// nothing, and asking again did nothing.
+TEST(a_request_approved_for_later_is_queued_until_it_goes_ahead) {
+    Run r;
+    r.basecamp.hold = true;
+    r.modules.serve("b", "1.0.0", "hb");
+    r.installer.install("b", "1.0.0", kRepo);
+    CHECK_EQ(r.progress.stage("b"), InstallStage::None);
+    r.basecamp.answerNext(approve({{"ticket", "t1"}}));
+    CHECK_EQ(r.basecamp.asked.size(), 2);
+    CHECK_EQ(r.basecamp.asked.value(1).params.value("ticket").toString(), QStringLiteral("t1"));
+    CHECK_EQ(r.progress.stage("b"), InstallStage::Queued);
+    CHECK_EQ(r.progress.planStage("b"), InstallStage::Queued);
+    r.basecamp.answerNext(approve(planOf({release("b", "1.0.0", "hb")})));
+    CHECK_EQ(r.installs(), QStringList{"install b"});
+    CHECK(r.outcome() == Installer::Outcome::Done);
+}
+
+TEST(a_go_ahead_refused_leaves_no_queued_row) {
+    Run r;
+    r.basecamp.hold = true;
+    r.installer.install("b", "1.0.0", kRepo);
+    r.basecamp.answerNext(approve({{"ticket", "t1"}}));
+    CHECK_EQ(r.progress.stage("b"), InstallStage::Queued);
+    r.basecamp.answerNext(refuse("cancelled"));
+    CHECK(!r.progress.has("b"));
+    CHECK(r.outcome() == Installer::Outcome::Cancelled);
+}
+
 // A go-ahead answered with another ticket is no go-ahead.
 TEST(a_ticket_answered_with_another_ticket_installs_nothing) {
     Run r;

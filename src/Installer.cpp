@@ -205,6 +205,11 @@ void Installer::goOn(const JobPtr& job)
     // Approved for its turn: the ticket buys the plan now.
     const QString ticket = str(job->answer.data, "ticket");
     if (!ticket.isEmpty()) {
+        // Its go-ahead may wait on another app's change: Queued till then.
+        if (!job->shownQueued && !m_progress->isInFlight(job->name)) {
+            m_progress->beginWaiting(job->name, job->version, job->repositoryUrl);
+            job->shownQueued = true;
+        }
         askGoAhead(job, ticket);
         return;
     }
