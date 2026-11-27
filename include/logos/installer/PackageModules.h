@@ -18,9 +18,10 @@ class PackageModules {
 public:
     virtual ~PackageModules() = default;
 
-    // package_downloader.start(); `done` whatever it answers (a downloader
-    // that predates start() refuses it and is running already).
-    virtual void startDownloader(std::function<void()> done) = 0;
+    // package_downloader.start(): `started` once it answers success. A load
+    // after one that didn't (no answer, or a refusal) asks again; a
+    // downloader that predates start() refuses it and is running already.
+    virtual void startDownloader(std::function<void(bool started)> done) = 0;
     virtual void listRepositories(std::function<void(const QVariantList&, bool read)> done) = 0;
     virtual void getCatalog(std::function<void(const QVariantList&, bool read)> done) = 0;
     // package_downloader.refreshCatalog(): fetch every repository again.
