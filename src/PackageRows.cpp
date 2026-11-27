@@ -219,6 +219,11 @@ QVariantMap buildPackageRow(const QVariantMap& obj,
         entry[QStringLiteral("signerDid")] =
             vm.value(QStringLiteral("signature")).toMap().value(QStringLiteral("did")).toString();
         entry[QStringLiteral("manifest")]  = vManifest;
+        // Who signed it, and the file's digest: what the trust judge
+        // (Trust.h) reads a release by.
+        if (vm.contains(QStringLiteral("signature")))
+            entry[QStringLiteral("signature")] = vm.value(QStringLiteral("signature"));
+        entry[QStringLiteral("sha256")] = vm.value(QStringLiteral("sha256")).toString();
         // Per version: after a merge, one package's versions can come from
         // several catalogs.
         entry[QStringLiteral("originRepositoryUrl")]  = originOf(vm, "originRepositoryUrl", originUrl);

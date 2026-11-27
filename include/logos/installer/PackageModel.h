@@ -134,6 +134,9 @@ public:
     int rowOf(const QString& name, const QString& repositoryUrl = {}) const;
     // Every role of `row`, by role name.
     QVariantMap rowAt(int row) const;
+    // package_manager's record of the installed `name` (getInstalledPackages()),
+    // or empty.
+    QVariantMap installedRecord(const QString& name) const;
 
     // What installing `row` at its selected version brings, as Basecamp's
     // resolver plans it for App Manager: the package itself (`subject`), then

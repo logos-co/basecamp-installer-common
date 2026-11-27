@@ -32,6 +32,13 @@ public:
 
     virtual void getInstalledPackages(std::function<void(const QVariantList&, bool read)> done) = 0;
     virtual void getValidVariants(std::function<void(const QStringList&, bool read)> done) = 0;
+    // package_manager.listTrustedKeys(): the keys the person trusts, in the
+    // keyring Basecamp points package_manager at. A backend that doesn't show
+    // who signed a package needn't read it.
+    virtual void listTrustedKeys(std::function<void(const QVariantList&, bool read)> done)
+    {
+        done({}, false);
+    }
 };
 
 }  // namespace logos::installer
