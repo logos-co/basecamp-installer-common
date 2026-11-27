@@ -26,6 +26,8 @@ What Logos' two installer apps, App Manager and Package Manager, share with each
 | `IntentConsent.h` | `Consent` through intents_module: the request, then its result read with the receipt only the backend holds once it has settled |
 | `InstallModules.h` | the package-module calls installing makes, as the backend reaches them |
 | `Approval.h` | holding an install to the approval: the plan or file, nothing outside it, nothing missing, same signer, same release |
+| `Trust.h` | who signed a package and whether the person trusts them, the one judge Basecamp's install dialogs and the apps share (namespace `logos::trust`): Logos's keys, a catalogue release, an installed copy or a local file judged, and what a dialog shows (`summary()`). Needs ICU (below) |
+| `PackageTrust.h` | `Trust.h`'s verdict, by name, of each package `PackageModel::packagesBroughtBy()` lists: the release picked for what installs, the copy on disk for what stays (`trustOfBrought()`) |
 
 **JavaScript** (`qml/Installer/`), `.pragma library`, facts and words only, nothing visual:
 
@@ -35,6 +37,7 @@ What Logos' two installer apps, App Manager and Package Manager, share with each
 | `Downloads.js` | bytes and progress text, transport caption and icon name, finding peers, the download notice |
 | `Stages.js` | stage, progress and action words; version transitions |
 | `Availability.js` | why a package isn't available, in words |
+| `Trust.js` | a `summary()` verdict in words, and its mark: check or warning, and its tone |
 
 Components and screens stay in each app.
 
@@ -50,6 +53,14 @@ logos_module(
     INCLUDE_DIRS ... ${BASECAMP_INSTALLER_COMMON_INCLUDE_DIRS}   # plus logos-package's headers
 )
 ```
+
+To show who signed a package, add `${BASECAMP_INSTALLER_COMMON_TRUST_SOURCES}`
+too and link ICU, as Qt does: `find_package(ICU REQUIRED COMPONENTS uc i18n)`,
+then `ICU::i18n ICU::uc`. They need nothing else of the library, so Basecamp
+builds them alone; an app that compiles both adds
+`${BASECAMP_INSTALLER_COMMON_PACKAGE_TRUST_SOURCES}` for `PackageTrust.h`. The
+keyring comes from `PackageModules::listTrustedKeys()`: package_manager's,
+which Basecamp points at its own.
 
 A backend implements `PackageModules` with its typed wrappers, forwards the
 modules' events, and shows the list through a filter:
@@ -136,3 +147,23 @@ nix build .#checks.<system>.unit   # C++ rules
 nix build .#checks.<system>.qml    # the JavaScript
 nix build .#checks.<system>.shared-words   # the checker
 ```
+
+## Logos's keys
+
+Basecamp and the apps trust Logos's packages by the keys in `logosKeys()`
+(`src/Trust.cpp`). Before every release, check that the first one is the key
+Logos signs with now: the "Official Logos signing key" in
+[logos-modules-release's README](https://github.com/logos-co/logos-modules-release#official-logos-signing-key).
+`lgx verify` on a freshly signed official package prints the same DID.
+
+- **A new key:** put it first, and keep the old one while what it signed
+  should still install without asking. The release must be out before Logos
+  signs anything with the new key: logos-modules-release re-signs every
+  current package in the same change as a rotation, and a Basecamp that
+  doesn't know the key shows all of them as impostors.
+- **A leaked key:** move it to `revoked`, and put its replacement first in the
+  same change. Nothing it signed then installs.
+- Never just delete a key from the list, and never leave it without a current
+  key (the unit tests check). Users do nothing either way: a keyring holding
+  any Logos key, old or revoked, stands for Logos and the keys it signs with
+  now.

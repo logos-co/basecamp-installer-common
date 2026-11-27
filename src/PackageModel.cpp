@@ -662,6 +662,11 @@ QVariantList PackageModel::packagesBroughtBy(int row, const QVariantMap& optiona
     return out;
 }
 
+QVariantMap PackageModel::installedRecord(const QString& name) const
+{
+    return m_installedByName.value(name);
+}
+
 QVariantMap PackageModel::rowAt(int row) const
 {
     QVariantMap out;

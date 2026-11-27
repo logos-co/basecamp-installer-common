@@ -5,6 +5,13 @@
 # The consumer also puts logos-package's headers (<logos/semver.hpp>) on its
 # include path, links Qt6::Core and Qt6::Network, and builds with AUTOMOC: the
 # headers with Q_OBJECT are listed so it finds them.
+#
+# Who signed a package (Trust.h), for a consumer that shows it: add
+# ${BASECAMP_INSTALLER_COMMON_TRUST_SOURCES} and link ICU, as Qt does:
+#   find_package(ICU REQUIRED COMPONENTS uc i18n) ... ICU::i18n ICU::uc
+# They need nothing else of the library, so Basecamp builds them alone. An app
+# that compiles both judges what an app brings (PackageTrust.h) with
+# ${BASECAMP_INSTALLER_COMMON_PACKAGE_TRUST_SOURCES} too.
 get_filename_component(_bic_root "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
 
 set(BASECAMP_INSTALLER_COMMON_INCLUDE_DIRS "${_bic_root}/include")
@@ -33,6 +40,14 @@ set(BASECAMP_INSTALLER_COMMON_SOURCES
     "${_bic_root}/src/RepositoryLabels.cpp"
     "${_bic_root}/src/RowState.cpp"
     "${_bic_root}/src/Types.cpp"
+)
+set(BASECAMP_INSTALLER_COMMON_TRUST_SOURCES
+    "${_bic_root}/include/logos/installer/Trust.h"
+    "${_bic_root}/src/Trust.cpp"
+)
+set(BASECAMP_INSTALLER_COMMON_PACKAGE_TRUST_SOURCES
+    "${_bic_root}/include/logos/installer/PackageTrust.h"
+    "${_bic_root}/src/PackageTrust.cpp"
 )
 set(BASECAMP_INSTALLER_COMMON_QML_DIR "${_bic_root}/qml")
 unset(_bic_root)

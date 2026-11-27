@@ -39,7 +39,8 @@
           name = "basecamp-installer-common-unit-tests";
           src = ./.;
           nativeBuildInputs = [ pkgs.cmake pkgs.ninja ];
-          buildInputs = [ pkgs.qt6.qtbase pkgs.qt6.qtdeclarative ];
+          # ICU: the trust sources' lookalike checks.
+          buildInputs = [ pkgs.qt6.qtbase pkgs.qt6.qtdeclarative pkgs.icu ];
           dontWrapQtApps = true;
           cmakeFlags = [ "-DLOGOS_PACKAGE_INCLUDE_DIR=${semverHeaders system}/include" ];
           doCheck = true;
