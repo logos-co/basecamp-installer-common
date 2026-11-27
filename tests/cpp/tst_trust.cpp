@@ -211,6 +211,20 @@ TEST(aLocalFileIsJudgedByItsVerification)
     CHECK_EQ(fromVerifiedFile(QStringLiteral("app"), {}, QVariantMap{}, trusted).status, Status::Invalid);
 }
 
+// A check that didn't answer blocks like a bad signature, and says which it was.
+TEST(aCheckThatFailedBlocksAndSaysSo)
+{
+    Package app{QStringLiteral("app"), {}, Status::Invalid};
+    app.checkFailed = true;
+    const QVariantMap s = summary({app}, {});
+    CHECK_EQ(s.value(QStringLiteral("blocked")).toBool(), true);
+    const QVariantMap row = s.value(QStringLiteral("packages")).toList().value(0).toMap();
+    CHECK_EQ(row.value(QStringLiteral("status")).toString(), QStringLiteral("invalid"));
+    CHECK_EQ(row.value(QStringLiteral("checkFailed")).toBool(), true);
+    const QVariantMap verdict = s.value(QStringLiteral("byName")).toMap().value(QStringLiteral("app")).toMap();
+    CHECK_EQ(verdict.value(QStringLiteral("checkFailed")).toBool(), true);
+}
+
 // Nothing to decide, but each row still says who signed it: before, a
 // fully trusted install showed nothing at all.
 TEST(aFullyTrustedInstallAsksNothingButSaysWhoSignedIt)
