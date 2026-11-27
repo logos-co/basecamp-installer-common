@@ -28,6 +28,7 @@ struct FakeModules : PackageModules {
     QList<QVariantMap> storage{QVariantMap{{"state", "running"}}};
     QString refreshError;
     QStringList failing;   // reads whose call fails
+    int startFails = 0;    // the next starts that fail
 
     void answer(std::function<void()> f)
     {
@@ -39,10 +40,12 @@ struct FakeModules : PackageModules {
         while (!held.isEmpty()) held.takeFirst()();
     }
 
-    void startDownloader(std::function<void()> done) override
+    void startDownloader(std::function<void(bool)> done) override
     {
         calls << "start";
-        answer(done);
+        const bool started = startFails == 0;
+        if (!started) --startFails;
+        answer([done, started] { done(started); });
     }
     void listRepositories(std::function<void(const QVariantList&, bool)> done) override
     {
@@ -130,6 +133,26 @@ TEST(the_downloader_is_started_once) {
     client.refresh();
     modules.flush();
     CHECK_EQ(count(modules.calls, "start"), 1);
+}
+
+// A start that failed is asked again by the next load: package_downloader
+// refuses every call until it has started, and a failed start taken for
+// one never recovered.
+TEST(a_downloader_that_didnt_start_is_started_again) {
+    FakeModules modules;
+    modules.startFails = 1;
+    modules.failing << "listRepositories";
+    PackageModel model;
+    CatalogClient client(&modules, &model);
+    client.load();
+    CHECK(!client.hasLoaded());
+    CHECK_EQ(client.loadError(), QStringLiteral("the repositories"));
+    modules.failing.clear();
+    client.refresh();
+    CHECK_EQ(count(modules.calls, "start"), 2);
+    CHECK(client.hasLoaded());
+    client.refresh();
+    CHECK_EQ(count(modules.calls, "start"), 2);
 }
 
 TEST(the_loading_flag_covers_the_whole_load) {

@@ -35,10 +35,12 @@ void CatalogClient::whenStarted(std::function<void()> then)
     if (m_starting) return;
     m_starting = true;
     QPointer<CatalogClient> self(this);
-    m_modules->startDownloader([self] {
+    m_modules->startDownloader([self](bool started) {
         if (!self) return;
         self->m_starting = false;
-        self->m_started = true;
+        // Not started: the next load asks again. What waits goes on either
+        // way, and says what it couldn't read.
+        self->m_started = started;
         const auto waiting = std::exchange(self->m_waitingForStart, {});
         for (const auto& call : waiting) call();
     });

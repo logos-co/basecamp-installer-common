@@ -25,7 +25,8 @@ class CatalogClient : public QObject {
 public:
     CatalogClient(PackageModules* modules, PackageModel* model, QObject* parent = nullptr);
 
-    // The first time: start the downloader, which does nothing until asked.
+    // Starts the downloader first, which does nothing until asked: once, or
+    // again after a start that didn't succeed.
     void load();
     // Reload: the downloader fetches every repository again first.
     void refresh();

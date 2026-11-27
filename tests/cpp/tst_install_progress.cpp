@@ -275,6 +275,82 @@ TEST(a_failed_dependency_fails_its_apps_plan) {
     CHECK_EQ(p.error("wallet_module"), QStringLiteral("checksum mismatch"));
 }
 
+// ── A new attempt ────────────────────────────────────────────────────────
+
+// What a failed attempt left is no part of the next: it starts Queued, with
+// no error, and its first bytes count.
+TEST(a_plan_after_a_failed_one_starts_afresh) {
+    InstallProgress p;
+    p.markFailed("wallet_ui", "the download stopped");
+    p.beginPlan("wallet_ui", {{"wallet_ui", "1.0", "H_ui", 1000}});
+    CHECK_EQ(p.stage("wallet_ui"), InstallStage::Queued);
+    CHECK_EQ(p.error("wallet_ui"), QString());
+    p.setDownloadProgress("wallet_ui", 400, 1000);
+    CHECK_EQ(p.stage("wallet_ui"), InstallStage::Downloading);
+    CHECK_EQ(p.downloadReceived("wallet_ui"), quint64(400));
+    CHECK_EQ(p.planStage("wallet_ui"), InstallStage::Downloading);
+}
+
+// Failed from one repository, then installed from another: the new install
+// shows on the other's row.
+TEST(a_plan_from_another_repository_after_a_failure_shows_on_its_row) {
+    InstallProgress p;
+    PackageModel model;
+    model.setProgress(&p);
+    model.setCatalog({catalogRow("repo1", "wallet_ui", "1.0", "H1"),
+                      catalogRow("repo2", "wallet_ui", "1.0", "H2")});
+    p.markFailed("wallet_ui", "the download stopped", "repo1");
+    p.beginPlan("wallet_ui", {{"wallet_ui", "1.0", "H2", 400, "repo2"}});
+    p.setDownloadProgress("wallet_ui", 100, 400);
+    CHECK(p.belongsTo("wallet_ui", "repo2"));
+    CHECK(!p.belongsTo("wallet_ui", "repo1"));
+    CHECK_EQ(roleOf(model, "wallet_ui", "downloadReceived", "repo2").toULongLong(), quint64(100));
+    CHECK_EQ(roleOf(model, "wallet_ui", "installStatus", "repo1").toInt(),
+             toInt(InstallStatus::NotInstalled));
+}
+
+// An app on disk whose retry fetches only a dependency: its own row's
+// failure was the attempt before's.
+TEST(a_plan_that_brings_only_a_dependency_leaves_no_failure_behind) {
+    InstallProgress p;
+    p.markFailed("chat", "chat_module: no variant for this platform");
+    p.beginPlan("chat", {{"chat_module", "1.0", "H_mod", 4000}});
+    CHECK(!p.has("chat"));
+    CHECK_EQ(p.planStage("chat"), InstallStage::Downloading);
+}
+
+// A dependency that failed last time is on its way with the retry's plan.
+TEST(a_plan_after_a_dependency_failed_starts_it_afresh) {
+    InstallProgress p;
+    p.markFailed("chat", "chat_module: no variant for this platform");
+    p.markFailed("chat_module", "no variant for this platform");
+    p.beginPlan("chat", {{"chat_module", "1.0", "H_mod", 4000}, {"chat", "1.0", "H", 1000}});
+    CHECK_EQ(p.stage("chat_module"), InstallStage::Queued);
+    CHECK_EQ(p.error("chat_module"), QString());
+    CHECK_EQ(p.planStage("chat"), InstallStage::Downloading);
+    p.setDownloadProgress("chat_module", 1000, 4000);
+    CHECK_EQ(p.planDownloadReceived("chat"), quint64(1000));
+}
+
+TEST(a_retry_waiting_its_turn_is_queued) {
+    InstallProgress p;
+    p.markFailed("wallet_ui", "the download stopped");
+    p.beginWaiting("wallet_ui", "1.0", {});
+    CHECK_EQ(p.stage("wallet_ui"), InstallStage::Queued);
+    CHECK_EQ(p.planStage("wallet_ui"), InstallStage::Queued);
+    CHECK_EQ(p.error("wallet_ui"), QString());
+}
+
+// One in flight is joined, not restarted.
+TEST(a_waiting_request_for_a_package_on_its_way_changes_nothing) {
+    InstallProgress p;
+    p.beginPlan("app_a", {{"shared", "1.0", "H_s", 4000}});
+    p.setDownloadProgress("shared", 3000, 4000);
+    p.beginWaiting("shared", "1.0", {});
+    CHECK_EQ(p.stage("shared"), InstallStage::Downloading);
+    CHECK_EQ(p.downloadReceived("shared"), quint64(3000));
+}
+
 // ── Where the bytes come from ────────────────────────────────────────────
 
 TEST(the_transport_is_recorded_with_the_bytes) {
