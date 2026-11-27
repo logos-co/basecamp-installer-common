@@ -164,6 +164,18 @@ QString releaseChanged(const QVariantMap& inspected, const QVariantMap& row)
         .arg(str(row, "name"), str(row, "version"));
 }
 
+QString digestChanged(const QString& sha256, const QVariantList& plan, const QVariantMap& row)
+{
+    QString approved;
+    for (const QVariant& v : plan) {
+        if (releaseOf(v.toMap()) == releaseOf(row)) approved = str(v.toMap(), "sha256");
+    }
+    if (approved.isEmpty() || approved.compare(sha256, Qt::CaseInsensitive) == 0) return {};
+    return QStringLiteral("%1 v%2 is not the file you approved, so nothing was installed. "
+                          "Try again to review it.")
+        .arg(str(row, "name"), str(row, "version"));
+}
+
 QString fileChanged(const QVariantMap& inspected, const QVariantMap& approvedFile,
                     const QString& name, const QString& version, const QString& sha256)
 {

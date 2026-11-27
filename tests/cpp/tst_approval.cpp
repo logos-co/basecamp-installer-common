@@ -164,6 +164,21 @@ TEST(a_copy_must_be_the_release_approved) {
     CHECK(!releaseChanged(same, withKey(row, "rootHash", "")).isEmpty());
 }
 
+// Unsigned, a release's root hash leaves its manifest out: the file is held
+// to the digest Basecamp approved for it, when it approved one.
+TEST(a_copy_must_be_the_file_approved_when_its_digest_was) {
+    const QVariantMap app = approvedRow("app", "2.0.0", "a");
+    const QVariantMap dep = approvedRow("dep", "1.0.0", "d");
+    const QVariantList plan{withKey(app, "sha256", "f1"), dep};
+    CHECK_EQ(digestChanged("f1", plan, app), QString());
+    CHECK_EQ(digestChanged("F1", plan, app), QString());
+    CHECK(digestChanged("f2", plan, app).contains("app v2.0.0"));
+    // Unreadable.
+    CHECK(!digestChanged("", plan, app).isEmpty());
+    // Approved without one: its root hash holds it.
+    CHECK_EQ(digestChanged("f2", plan, dep), QString());
+}
+
 // ── A local file ─────────────────────────────────────────────────────────
 
 TEST(a_file_is_identified_by_the_sha256_of_all_of_it) {

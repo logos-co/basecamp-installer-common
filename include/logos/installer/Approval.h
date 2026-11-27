@@ -6,7 +6,7 @@
 
 // Holding an install to what Basecamp approved. An approval is Basecamp's
 // answer to a backend's confirm_install or confirm_upgrade: a plan
-// ({plan: [{name, version, rootHash, repositoryUrl, signer?, optional?}]})
+// ({plan: [{name, version, rootHash, repositoryUrl, signer?, sha256?, optional?}]})
 // for a catalog release, or a file ({file: {rootHash, signer, sha256}}) for a
 // local .lgx. Pure functions, from both installer apps' pipelines.
 namespace logos::installer {
@@ -48,6 +48,12 @@ QString signerChanged(const QVariantMap& verified, const QVariantList& plan, con
 // Why the file inspectPackage() describes as `inspected` is not the release
 // `row` names (name, version, root hash), or empty.
 QString releaseChanged(const QVariantMap& inspected, const QVariantMap& row);
+
+// Why a fetched file whose SHA-256 is `sha256` is not the file `plan`
+// approved for `row`'s release, or empty. A release approved unsigned carries
+// the catalog's digest of its file, as its root hash leaves its manifest out;
+// one approved without a digest is held to its root hash alone.
+QString digestChanged(const QString& sha256, const QVariantList& plan, const QVariantMap& row);
 
 // Why the file inspectPackage() describes as `inspected`, whose SHA-256 is
 // `sha256`, is not the one approved ({rootHash, signer, sha256}) as `name` at
