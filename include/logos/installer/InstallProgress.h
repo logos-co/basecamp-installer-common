@@ -36,6 +36,8 @@ public:
         bool          downloadComplete = false;
         QString       transport;
         bool          fellBackFromStorage = false;
+        // A request behind another, before Basecamp is asked about it.
+        bool          waiting = false;
     };
 
     // Initialised positionally ({name, version, rootHash, size}): add fields
@@ -67,8 +69,9 @@ public:
     // started none reports its own.
     quint64 planDownloadReceived(const QString& name) const;
     quint64 planDownloadTotal(const QString& name) const;
-    // One phase for the whole plan: Downloading until something installs,
-    // then Installing, then Installed; Failed if any package failed.
+    // One phase for the whole plan: Queued while it waits its turn
+    // (beginWaiting()), Downloading until something installs, then
+    // Installing, then Installed; Failed if any package failed.
     InstallStage planStage(const QString& name) const;
     // The plan's package on the wire now, else `name`'s own.
     QString planDownloadTransport(const QString& name) const;
@@ -84,6 +87,10 @@ public:
     // Every package the install of `topLevel` brings, each Queued until its
     // first bytes; its size seeds the plan's total.
     void beginPlan(const QString& topLevel, const QList<PlannedPackage>& plan);
+    // A request for `name` waiting its turn behind another, before Basecamp
+    // is asked about it: Queued, and so is its plan, until clear() or its
+    // approved plan (beginPlan()). Nothing if `name` is in flight already.
+    void beginWaiting(const QString& name, const QString& version, const QString& repositoryUrl);
     void setStage(const QString& name, InstallStage stage);
     // Only while Queued or Downloading. A total of 0 keeps the known one; an
     // empty transport keeps the last; "http" after "logos" is a fallback.

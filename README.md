@@ -21,7 +21,7 @@ What Logos' two installer apps, App Manager and Package Manager, share with each
 | `PackageModules.h` | the package modules as the backend reaches them; the library makes no module calls of its own |
 | `IconFetcher.h` | the catalog's icons, fetched over HTTP(S), checked (PNG, size, the catalog's sha256), kept by hash, and given to the view as `data:` URLs |
 | `OnlineWatch.h` | whether this host is online, for the download notice |
-| `Installer.h` | installs, upgrades and uninstalls only what Basecamp approves; one request at a time; an install or upgrade asks with the versions and optional packages picked (`versions`, `optional`) |
+| `Installer.h` | installs, upgrades and uninstalls only what Basecamp approves; one request at a time, an install or upgrade waiting its turn asked about at once (`waits`; a `ticket` for its turn); an install or upgrade asks with the versions and optional packages picked (`versions`, `optional`) |
 | `Consent.h` | asking Basecamp to approve (`basecamp.packages.confirm_install / _upgrade / _uninstall`), raised by the backend so the answer comes back to it alone |
 | `IntentConsent.h` | `Consent` through intents_module: the request, then its result read with the receipt only the backend holds once it has settled |
 | `InstallModules.h` | the package-module calls installing makes, as the backend reaches them |

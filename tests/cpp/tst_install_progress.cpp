@@ -549,6 +549,32 @@ TEST(an_install_is_one_download_phase_then_installing) {
     CHECK_EQ(phases.value(2), InstallStage::Installed);
 }
 
+// A request behind another: Basecamp hasn't been asked about it, and nothing
+// of it is on its way. Its plan read Downloading, so its tile and details
+// said so.
+TEST(a_request_waiting_its_turn_is_queued_its_plan_too) {
+    InstallProgress p;
+    PackageModel model;
+    model.setProgress(&p);
+    listCatalog(model);
+    p.beginWaiting(kApp, "1.0.0", {});
+    CHECK_EQ(p.stage(kApp), InstallStage::Queued);
+    CHECK_EQ(planStageOf(model), InstallStage::Queued);
+    // Its turn, approved: its plan is on its way from the start.
+    p.clear(kApp);
+    p.beginPlan(kApp, planned());
+    CHECK_EQ(planStageOf(model), InstallStage::Downloading);
+}
+
+// Brought meanwhile by another install, it is on its way with it.
+TEST(a_waiting_request_another_install_brings_is_on_its_way) {
+    InstallProgress p;
+    p.beginWaiting("delivery_module", "1.0.0", {});
+    p.beginPlan(kApp, planned());
+    CHECK_EQ(p.planStage(kApp), InstallStage::Downloading);
+    CHECK_EQ(p.planStage("delivery_module"), InstallStage::Downloading);
+}
+
 TEST(no_row_ever_moves_backwards) {
     InstallProgress p;
     PackageModel model;
